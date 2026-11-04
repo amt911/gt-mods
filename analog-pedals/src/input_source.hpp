@@ -9,6 +9,8 @@ namespace pedals {
 struct PedalInput {
     float throttle = 0.0f;
     float brake = 0.0f;
+    bool throttle_trigger = false;  // the controller's right trigger is past its dead zone (its value is authoritative)
+    bool brake_trigger = false;     // same, left trigger
 };
 
 // Comma-separated SDL key names ("Up,W"). Unknown names are skipped.

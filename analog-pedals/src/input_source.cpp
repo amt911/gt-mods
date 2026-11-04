@@ -79,7 +79,8 @@ PedalInput read_input(const PedalSettings &settings, int elapsed_ms) {
         s.fake_read = true;
         s.fake = parse_fake(std::getenv("GT_MOD_PEDALS_FAKE"));
     }
-    if (s.fake) return PedalInput{s.fake->first, s.fake->second};
+    // The fake input stands for the triggers: authoritative like a pressed trigger (a route holding a button can't lift it).
+    if (s.fake) return PedalInput{s.fake->first, s.fake->second, s.fake->first > 0.0f, s.fake->second > 0.0f};
     refresh_pad(s);
     float pad_throttle = 0.0f, pad_brake = 0.0f;
     if (s.pad) {
@@ -88,7 +89,9 @@ PedalInput read_input(const PedalSettings &settings, int elapsed_ms) {
     }
     float key_throttle = s.throttle_ramp.step(any_held(s.throttle_keys), elapsed_ms, settings.ramp_ms);
     float key_brake = s.brake_ramp.step(any_held(s.brake_keys), elapsed_ms, settings.ramp_ms);
-    return PedalInput{combine(pad_throttle, key_throttle), combine(pad_brake, key_brake)};
+    // A pressed trigger decides alone (keys are ignored while it is pressed): its partial value must not be lifted by a key.
+    return PedalInput{pad_throttle > 0.0f ? pad_throttle : key_throttle, pad_brake > 0.0f ? pad_brake : key_brake,
+                      pad_throttle > 0.0f, pad_brake > 0.0f};
 }
 
 } // namespace pedals

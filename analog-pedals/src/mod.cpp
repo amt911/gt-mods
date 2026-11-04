@@ -17,7 +17,7 @@
 // The 0x08896780 hook notes whether it was called for exactly the human entry/index found in the step hook; the clamp hook injects
 // only right after such a fill and consumes it. (Reading the caller's s3 does not work: the decompiled 0x0894DD9C of --decomp on
 // does not keep the index in a register.) The record-address check is kept as a second guard.
-// Player = driver entry with vtable 0x08CC1F60 and byte +0xA8 == 0 (live, not replay).
+// Player = driver entry with vtable 0x08CC1F60, byte +0xA8 == 0 (live, not replay) and +0x6C != 0 (reads the pad; see kEntryInput).
 #include "gt_mod/gt_mod_api.h"
 
 #include "input_source.hpp"
@@ -39,6 +39,11 @@ constexpr std::uint32_t kClampRecord = 0x08948B78;  // a0 = input record
 constexpr std::uint32_t kFillRecord = 0x08896780;   // a0 = driver entry, a1 = temp record, a2 = car index (entry vtable slot 0x64)
 constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
 constexpr std::uint32_t kEntryReplay = 0xA8;
+// The human entry that reads the pad: +0x6C points to the pad input object (the same object, 0x094168D8, in a race and in
+// Time Trial). Time Trial also builds a second human-class entry (vtable 0x08CC1F60, +0xA8 == 0) for the ghost/lap recorder,
+// with +0x6C == 0, +0xF8 == 0 and +0x08 == 0x00010100 (dumps 2026-11-04, perf_tt_newyork route; the race route's single
+// human has +0x6C = 0x094168D8, +0xF8 = 1). So "human" = vtable + not replay + +0x6C != 0.
+constexpr std::uint32_t kEntryInput = 0x6C;
 constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010;
 constexpr std::uint32_t kPedalThrottle = 0x530, kPedalBrake = 0x538, kEffectiveThrottle = 0x534;  // floats at word(car+8)+off
 constexpr std::uint8_t kFlagThrottle = 0x02, kFlagBrake = 0x04;       // record byte 0
@@ -87,12 +92,12 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world, std::uint32_t *f
         const std::uint32_t entry = a.read32(c, list + 4 + (2 * i + ix) * 4);
         if (entry == 0) continue;
         const std::uint32_t car = slots + i * kSlotSize + kCarInSlot;
-        if (a.read32(c, entry) == kPlayerVtable && a.read8(c, entry + kEntryReplay) == 0) {
+        if (a.read32(c, entry) == kPlayerVtable && a.read8(c, entry + kEntryReplay) == 0 && a.read32(c, entry + kEntryInput) != 0) {
             ++humans;
             found = car;
             g_player_entry = entry;
             g_player_index = static_cast<std::uint32_t>(i);
-        } else if (replay_car && a.read32(c, entry) == kPlayerVtable) {
+        } else if (replay_car && a.read32(c, entry) == kPlayerVtable && a.read8(c, entry + kEntryReplay) != 0) {
             *replay_car = car;  // the human car while a replay plays (log only)
         } else if (first_ai_car && *first_ai_car == 0 && a.read32(c, entry) != kPlayerVtable) {
             *first_ai_car = car;
@@ -148,16 +153,19 @@ void on_step(GtModCtx *c) {
     }
 }
 
-// Writes `record_value` (0..4096) into record field `field` as an analog press, unless the game already holds a bigger one
-// there (a digital press is "full": non-zero without the analog flag).
-void inject(GtModCtx *c, std::uint32_t record, std::uint32_t field, std::uint8_t flag, int record_value) {
-    if (record_value <= 0) return;
+// Writes `record_value` (0..4096) into record field `field` as an analog press. While the controller trigger is pressed its
+// value replaces whatever the game put there (the host also turns a trigger past ~25 % into a digital button, which would
+// otherwise make every press past that point full); otherwise the larger press wins (a digital press is "full": non-zero
+// without the analog flag).
+void inject(GtModCtx *c, std::uint32_t record, std::uint32_t field, std::uint8_t flag, int record_value, bool trigger_pressed) {
     const std::uint8_t flags = g_api->read8(c, record);
     const int raw = static_cast<std::int16_t>(g_api->read16(c, record + field));
     const int existing = (flags & flag) != 0 ? raw : (raw != 0 ? 4096 : 0);
-    if (record_value <= existing) return;
-    g_api->write8(c, record, flags | flag);
-    g_api->write16(c, record + field, static_cast<std::uint16_t>(record_value));
+    const int value = pedals::resolve_record(record_value, existing, trigger_pressed);
+    // The game's own press stays as it is (no trigger, or a trigger below the pedal floor: resolve_record kept `existing`).
+    if (value == existing && (!trigger_pressed || record_value <= 0)) return;
+    g_api->write8(c, record, value > 0 ? (flags | flag) : flags);
+    g_api->write16(c, record + field, static_cast<std::uint16_t>(value));
 }
 
 void on_fill_record(GtModCtx *c) {
@@ -182,8 +190,8 @@ void on_clamp_record(GtModCtx *c) {
         }
         return;
     }
-    inject(c, record, kRecordThrottle, kFlagThrottle, pedals::throttle_record_for_pedal(g_input.throttle));
-    inject(c, record, kRecordBrake, kFlagBrake, pedals::brake_record_for_pedal(g_input.brake));
+    inject(c, record, kRecordThrottle, kFlagThrottle, pedals::throttle_record_for_pedal(g_input.throttle), g_input.throttle_trigger);
+    inject(c, record, kRecordBrake, kFlagBrake, pedals::brake_record_for_pedal(g_input.brake), g_input.brake_trigger);
 }
 
 }  // namespace
