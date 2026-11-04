@@ -27,6 +27,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <string>
 
 namespace {
@@ -61,8 +63,8 @@ unsigned g_steps = 0, g_replay_steps = 0;
 std::uint32_t g_player_entry = 0, g_player_index = 0;
 bool g_fill_was_player = false;  // 0x08896780 just ran for the human entry/index and its record has not been clamped yet
 std::uint32_t g_expected_record = 0;  // this step's record address (stack of 0x0894DD9C)
-unsigned g_clamp_calls = 0;           // calls of 0x08948B78 in this step
-bool g_warned_record = false;
+unsigned g_proven_clamps = 0;           // proven clamps (right after a human fill) injected in this step
+bool g_warned_record = false, g_logged_thread = false;
 std::chrono::steady_clock::time_point g_last_step;
 bool g_have_last_step = false;
 
@@ -111,11 +113,17 @@ void on_step(GtModCtx *c) {
     g_have_last_step = true;
     g_input = pedals::read_input(g_settings, std::min(elapsed_ms, 50));
     g_expected_record = g_api->gpr(c, 29) - kRecordFromEntrySp;
-    g_clamp_calls = 0;
+    g_proven_clamps = 0;
     g_fill_was_player = false;
     g_ai_car = g_replay_car = 0;
     g_player_car = find_player_car(c, g_api->gpr(c, 4), &g_ai_car, &g_replay_car);
     g_api->call_original(c);
+    if (g_log_steps && !g_logged_thread) {
+        g_logged_thread = true;
+        char line[80];
+        std::snprintf(line, sizeof line, "step hook runs on tid %ld", static_cast<long>(::syscall(SYS_gettid)));
+        g_api->log(g_self, line);
+    }
     if (g_log_steps && g_replay_car != 0 && (++g_replay_steps % 60) == 0) {
         const std::uint32_t rd = g_api->read32(c, g_replay_car + 8);
         char line[120];
@@ -164,12 +172,12 @@ void on_clamp_record(GtModCtx *c) {
     // Provable player record: the human car's step calls 0x08948B78 once, with the buffer 0x0894DD9C keeps for it.
     const bool proven = g_fill_was_player;
     g_fill_was_player = false;  // one clamp per fill
-    if (!proven || ++g_clamp_calls != 1 || record != g_expected_record) {
+    if (!proven || ++g_proven_clamps != 1 || record != g_expected_record) {
         if (!g_warned_record) {
             g_warned_record = true;
             char line[160];
-            std::snprintf(line, sizeof line, "unexpected 0x08948B78 call (player fill %d, #%u, record %08X, expected %08X): not injecting",
-                          proven ? 1 : 0, g_clamp_calls, record, g_expected_record);
+            std::snprintf(line, sizeof line, "unexpected 0x08948B78 call (human fill %d, proven clamp #%u, record %08X, expected %08X): not injecting",
+                          proven ? 1 : 0, g_proven_clamps, record, g_expected_record);
             g_api->log(g_self, line);
         }
         return;
