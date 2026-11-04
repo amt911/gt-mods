@@ -8,7 +8,13 @@ Nothing game-derived lives here: only hand-written mod code.
 
 ## Mods
 
-- `analog-pedals` - analog triggers / keyboard keys mapped to throttle and brake (0..1). Disabled by default.
+- `analog-pedals` - analog triggers / keyboard keys mapped to throttle and brake (0..1; the game applies its own pedal response on top). Disabled by default.
+  Settings in its `mod.toml` (`deadzone` in [0,1), `curve` > 0, `ramp_ms` >= 0; an invalid value is logged and the default
+  used). Controller: the first SDL game controller's right trigger = accelerate, left trigger = brake. Keyboard: `throttle_keys`
+  / `brake_keys` (SDL key names, default `Up,W` / `Down,S`), ramped over `ramp_ms`. The pad's own buttons keep working: the
+  larger press wins. Only the player's live car is touched (not AI cars, not during a replay).
+  `GT_MOD_PEDALS_FAKE=0.5,0.3` replaces the input with a fixed throttle/brake (used by the in-game check);
+  `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.
 
 ## Build
 
@@ -22,8 +28,10 @@ ctest --test-dir build
 
 ## Install
 
-Copy the mod directory (its `mod.toml` and the built library) into the game's mods directory and set
-`enabled = true` in `mod.toml`.
+Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `libanalog_pedals.so` from
+`build/analog-pedals/`) into the game's mods directory (`<build>/mods/` next to `gt_play`, or `GT_MODS_DIR`) and set
+`enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
+gran-turismo-decomp checkout: `tools/mod_pedals_check.sh`.
 
 ## Licence
 

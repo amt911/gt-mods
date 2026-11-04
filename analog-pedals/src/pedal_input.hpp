@@ -2,6 +2,8 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <optional>
 #include <utility>
 
@@ -12,6 +14,11 @@ struct PedalSettings {
     float curve = 1.0f;
     int ramp_ms = 100;
 };
+
+// deadzone in [0,1), curve > 0, ramp_ms >= 0; a missing key keeps the default silently, an invalid value keeps the
+// default and calls `warn` once for that key. `get` returns the mod.toml value or nullptr.
+PedalSettings parse_settings(const std::function<const char *(const char *)> &get,
+                             const std::function<void(const std::string &)> &warn);
 
 // Raw SDL trigger 0..32767 -> 0..1. Below `deadzone` -> 0, then rescaled to 0..1 and raised to `curve`.
 float trigger_to_pedal(std::int16_t raw, const PedalSettings &s);

@@ -3,6 +3,9 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace pedals;
 
@@ -70,7 +73,36 @@ static void fake_env_parses_and_rejects() {
     assert(!parse_fake("0.5,0.3x"));
 }
 
+static PedalSettings parse(std::map<std::string, std::string> kv, std::vector<std::string> &warnings) {
+    return parse_settings([&](const char *k) -> const char * { auto it = kv.find(k); return it == kv.end() ? nullptr : it->second.c_str(); },
+                          [&](const std::string &w) { warnings.push_back(w); });
+}
+static void settings_valid_values_are_used() {
+    std::vector<std::string> w;
+    auto s = parse({{"deadzone", "0.2"}, {"curve", "1.5"}, {"ramp_ms", "250"}}, w);
+    assert(near(s.deadzone, 0.2f) && near(s.curve, 1.5f) && s.ramp_ms == 250 && w.empty());
+    s = parse({{"deadzone", "0"}, {"ramp_ms", "0"}}, w);
+    assert(s.deadzone == 0.0f && s.ramp_ms == 0 && w.empty());
+}
+static void settings_missing_use_defaults_silently() {
+    std::vector<std::string> w;
+    auto s = parse({}, w);
+    assert(near(s.deadzone, 0.05f) && near(s.curve, 1.0f) && s.ramp_ms == 100 && w.empty());
+}
+static void settings_invalid_log_once_and_default() {
+    std::vector<std::string> w;
+    auto s = parse({{"deadzone", "1"}, {"curve", "0"}, {"ramp_ms", "-5"}}, w);
+    assert(near(s.deadzone, 0.05f) && near(s.curve, 1.0f) && s.ramp_ms == 100);
+    assert(w.size() == 3);
+    w.clear();
+    s = parse({{"deadzone", "abc"}, {"curve", "-1"}, {"ramp_ms", "10x"}}, w);
+    assert(near(s.deadzone, 0.05f) && near(s.curve, 1.0f) && s.ramp_ms == 100 && w.size() == 3);
+}
+
 int main() {
+    settings_valid_values_are_used();
+    settings_missing_use_defaults_silently();
+    settings_invalid_log_once_and_default();
     deadzone_zeroes_rest_noise();
     full_press_is_one();
     linear_midpoint();
