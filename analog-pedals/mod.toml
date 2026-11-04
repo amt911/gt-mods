@@ -1,0 +1,13 @@
+id = "analog-pedals"
+name = "Analog pedals"
+version = "0.1.0"
+library = "libanalog_pedals.so"
+api = 1
+enabled = false
+
+[settings]
+deadzone = "0.05"
+curve = "1.0"
+ramp_ms = 100
+throttle_keys = "Up,W"
+brake_keys = "Down,S"
