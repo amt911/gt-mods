@@ -99,7 +99,46 @@ static void settings_invalid_log_once_and_default() {
     assert(near(s.deadzone, 0.05f) && near(s.curve, 1.0f) && s.ramp_ms == 100 && w.size() == 3);
 }
 
+static void throttle_inverse_roundtrips() {
+    for (float p : {0.1f, 0.15f, 0.3f, 0.5f, 0.75f, 0.9f, 1.0f}) {
+        int raw = throttle_record_for_pedal(p);
+        assert(raw >= 1 && raw <= 4096);
+        assert(near(throttle_pedal_for_record(raw), p, 0.02f));
+    }
+    assert(throttle_record_for_pedal(1.0f) == 4096);
+    assert(near(throttle_pedal_for_record(4096), 1.0f));
+}
+static void throttle_model_matches_measured_game_response() {
+    // measured in game 2026-11-04: record 2048 (0.5) -> pedal 0.1035
+    assert(near(throttle_pedal_for_record(2048), 0.1035f, 0.0005f));
+    assert(throttle_pedal_for_record(0) == 0.0f);
+}
+static void brake_model_matches_measured_game_response() {
+    // measured: record 1229 (0.3) -> pedal 0.37
+    assert(near(brake_pedal_for_record(1229), 0.37f, 0.001f));
+    assert(brake_pedal_for_record(0) == 0.0f);
+    assert(near(brake_pedal_for_record(4096), 1.0f));
+}
+static void brake_inverse_roundtrips() {
+    for (float p : {0.1f, 0.3f, 0.5f, 0.8f, 1.0f}) {
+        int raw = brake_record_for_pedal(p);
+        assert(near(brake_pedal_for_record(raw), p, 0.02f));
+    }
+    assert(brake_record_for_pedal(0.3f) > 800 && brake_record_for_pedal(0.3f) < 1000);
+}
+static void below_the_game_floor_snaps_to_nearest() {
+    // the game's smallest non-zero pedal is 0.1: below 0.05 -> released (0), 0.05..0.1 -> the smallest press (raw 1)
+    assert(throttle_record_for_pedal(0.0f) == 0 && brake_record_for_pedal(0.0f) == 0);
+    assert(throttle_record_for_pedal(0.04f) == 0 && brake_record_for_pedal(0.04f) == 0);
+    assert(throttle_record_for_pedal(0.07f) == 1 && brake_record_for_pedal(0.07f) == 1);
+}
+
 int main() {
+    throttle_inverse_roundtrips();
+    throttle_model_matches_measured_game_response();
+    brake_model_matches_measured_game_response();
+    brake_inverse_roundtrips();
+    below_the_game_floor_snaps_to_nearest();
     settings_valid_values_are_used();
     settings_missing_use_defaults_silently();
     settings_invalid_log_once_and_default();

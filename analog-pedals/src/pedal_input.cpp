@@ -36,6 +36,23 @@ PedalSettings parse_settings(const std::function<const char *(const char *)> &ge
     return s;
 }
 
+namespace {
+constexpr float kFloor = 0.1f;  // constant at 0x08CDE108
+float unit(int raw) { return std::clamp(static_cast<float>(raw), 0.0f, 4096.0f) / 4096.0f; }
+float with_floor(float y) { return y + (1.0f - y) * kFloor; }
+int record_for(float pedal, float exponent) {
+    if (!(pedal >= 0.05f)) return 0;  // also NaN
+    float y = std::clamp((pedal - kFloor) / (1.0f - kFloor), 0.0f, 1.0f);
+    float x = std::pow(y, 1.0f / exponent);
+    return std::clamp(static_cast<int>(std::lround(x * 4096.0f)), 1, 4096);
+}
+} // namespace
+
+float throttle_pedal_for_record(int raw) { return raw <= 0 ? 0.0f : with_floor(std::pow(unit(raw), 8.0f)); }
+float brake_pedal_for_record(int raw) { return raw <= 0 ? 0.0f : with_floor(unit(raw)); }
+int throttle_record_for_pedal(float pedal) { return record_for(pedal, 8.0f); }
+int brake_record_for_pedal(float pedal) { return record_for(pedal, 1.0f); }
+
 float trigger_to_pedal(std::int16_t raw, const PedalSettings &s) {
     float v = std::clamp(static_cast<float>(raw) / 32767.0f, 0.0f, 1.0f);
     if (v < s.deadzone) return 0.0f;

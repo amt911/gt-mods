@@ -20,6 +20,17 @@ struct PedalSettings {
 PedalSettings parse_settings(const std::function<const char *(const char *)> &get,
                              const std::function<void(const std::string &)> &warn);
 
+// The game's own response to the analog input record (0x08952B68, docs/FACTS.md of gran-turismo-decomp), so the mod can write the
+// record value whose response is the requested pedal. raw = s16 record value 0..4096 (x = raw/4096).
+//   accelerator (+8, flag 0x02): y = x^8 (curve object 0x08CF2FDC: type 3, c = 1, linear term 0), pedal = y + (1 - y) * 0.1
+//   brake (+0xA, flag 0x04):     pedal = x + (1 - x) * 0.1
+// Both jump to at least 0.1 for any non-zero record, so a pedal below 0.1 cannot be produced: below 0.05 the inverse returns 0
+// (released), between 0.05 and 0.1 the smallest press (raw 1, pedal 0.1).
+float throttle_pedal_for_record(int raw);
+float brake_pedal_for_record(int raw);
+int throttle_record_for_pedal(float pedal);
+int brake_record_for_pedal(float pedal);
+
 // Raw SDL trigger 0..32767 -> 0..1. Below `deadzone` -> 0, then rescaled to 0..1 and raised to `curve`.
 float trigger_to_pedal(std::int16_t raw, const PedalSettings &s);
 
