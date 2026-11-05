@@ -12,7 +12,8 @@ Nothing game-derived lives here: only hand-written mod code.
   Settings in its `mod.toml` (`deadzone` in [0,1), `curve` > 0, `ramp_ms` >= 0; an invalid value is logged and the default
   used). Controller: the first SDL game controller's right trigger = accelerate, left trigger = brake. Keyboard: `throttle_keys`
   / `brake_keys` (SDL key names, default `Up,W` / `Down,S`), ramped over `ramp_ms`. The pad's own buttons keep working: the
-  larger press wins. The pedal follows the trigger exactly (the mod writes the record value whose game response is that pedal),
+  larger press wins, except while a trigger is pressed: then the trigger decides (gt_play also maps a trigger past ~25 % to
+  Cross/Square, which would otherwise turn a half press into a full one). Works in races and Time Trial. The pedal follows the trigger exactly (the mod writes the record value whose game response is that pedal),
   except below 0.05 (not injected) and 0.05-0.1 (the game's smallest press is 0.1). Only the player's live car is touched (not AI cars, not during a replay).
   `GT_MOD_PEDALS_FAKE=0.5,0.3` replaces the input with a fixed throttle/brake (used by the in-game check);
   `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.

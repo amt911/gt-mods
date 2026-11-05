@@ -94,4 +94,9 @@ std::optional<std::pair<float, float>> parse_fake(const char *env) {
     return std::make_pair(a, b);
 }
 
+int resolve_record(int injected, int existing, bool trigger_pressed) {
+    if (trigger_pressed && injected > 0) return injected;  // below the pedal floor the mod has nothing to say
+    return injected > existing ? injected : existing;
+}
+
 } // namespace pedals

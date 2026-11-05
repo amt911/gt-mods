@@ -45,6 +45,12 @@ class KeyRamp {
 
 float combine(float pad, float keys);
 
+// The record value to leave in a pedal field: `injected` (0..4096) from the mod, `existing` the game's (a digital press as
+// 4096). `trigger_pressed` (the controller trigger is past its dead zone) makes the mod's value authoritative: the host
+// also maps a trigger past ~25 % to a digital button, which must not turn a partial press into a full one. An `injected` of 0
+// (trigger below the pedal floor) never overrides: the game's press stays.
+int resolve_record(int injected, int existing, bool trigger_pressed);
+
 // "0.5,0.3" -> {throttle, brake}; malformed or outside 0..1 -> nullopt.
 std::optional<std::pair<float, float>> parse_fake(const char *env);
 

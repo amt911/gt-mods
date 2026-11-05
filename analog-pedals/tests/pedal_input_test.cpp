@@ -133,6 +133,19 @@ static void below_the_game_floor_snaps_to_nearest() {
     assert(throttle_record_for_pedal(0.07f) == 1 && brake_record_for_pedal(0.07f) == 1);
 }
 
+// The record value the mod leaves in a pedal field. `existing` is what the game put there (0..4096, a digital press
+// already counted as 4096). A pressed trigger is authoritative: its analog value replaces the host's digital press (the
+// host also turns a trigger past ~25 % into a button, which would otherwise win and jump to full). Otherwise the larger
+// press wins (keyboard ramps, face buttons).
+static void trigger_overrides_digital_press() {
+    assert(resolve_record(1000, 4096, true) == 1000);   // trigger at ~25 % + host button: the trigger decides
+    assert(resolve_record(1000, 4096, false) == 4096);  // keyboard/face button already full: keep it
+    assert(resolve_record(3000, 1000, false) == 3000);  // larger analog wins
+    assert(resolve_record(0, 4096, false) == 4096);     // nothing from the mod: the game's press stays
+    assert(resolve_record(0, 0, false) == 0);
+    assert(resolve_record(0, 4096, true) == 4096);      // trigger touched below the pedal floor: the game's press stays
+}
+
 int main() {
     throttle_inverse_roundtrips();
     throttle_model_matches_measured_game_response();
@@ -151,6 +164,7 @@ int main() {
     ramp_is_capped_per_step();
     release_ramps_down();
     combine_takes_max();
+    trigger_overrides_digital_press();
     fake_env_parses_and_rejects();
     std::puts("pedal_input_test: all passed");
     return 0;
