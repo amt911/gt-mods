@@ -17,6 +17,15 @@ Nothing game-derived lives here: only hand-written mod code.
   except below 0.05 (not injected) and 0.05-0.1 (the game's smallest press is 0.1). Only the player's live car is touched (not AI cars, not during a replay).
   `GT_MOD_PEDALS_FAKE=0.5,0.3` replaces the input with a fixed throttle/brake (used by the in-game check);
   `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.
+- `orbit-camera` - Gran Turismo 7 style orbit camera on the right stick. The stick's direction picks the look direction around the
+  player's car (right = +90 deg, left = -90 deg, forward = 0); pulled back (past `back_threshold`) or clicked (R3) = rear view
+  (180 deg). The camera swings around the car in chase views and looks around from the seat in bumper/cockpit views (the pivot is
+  the car, which there is ~at the eye); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
+  `smooth_ms` time constant (80) and back to 0 on release; dead zone `deadzone` (0.25). Keyboard: `look_left_keys` /
+  `look_right_keys` / `look_back_keys` (SDL key names, defaults `J` / `L` / `K`, free in gt_play's default bindings). Only while
+  driving (live player car, not a replay, not a menu); with no input it writes nothing. Disabled by default; toggles live from the
+  F9 menu. `GT_MOD_CAMERA_FAKE=<yaw>[,<pitch>]` fixes the angle (used by the in-game check, `tools/mod_camera_check.sh`);
+  `GT_MOD_CAMERA_LOG=1` logs yaw, scene and pivot once a second.
 
 ## Build
 
@@ -33,7 +42,7 @@ ctest --test-dir build
 Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `libanalog_pedals.so` from
 `build/analog-pedals/`) into the game's mods directory (`<build>/mods/` next to `gt_play`, or `GT_MODS_DIR`) and set
 `enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
-gran-turismo-decomp checkout: `tools/mod_pedals_check.sh`.
+gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh`.
 
 ## Licence
 
