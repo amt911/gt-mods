@@ -30,6 +30,15 @@ Nothing game-derived lives here: only hand-written mod code.
   uploads, ends it). Known limits: in bumper/cockpit views the pivot is the car, which is not exactly at the eye (the camera
   swings slightly instead of turning in place); the mod opens its own SDL controller handle next to the host's; the look keys
   (J/K/L) also act while the F9 mod menu is open (the SDK cannot tell whether the menu is open).
+- `reset-to-track` - one button puts the player's car back on the road, upright and facing the way it was going, like "recover car" in
+  modern racing games. Button: the first controller's Select held 0.5 s (`hold_ms`), or the keyboard key `reset_keys` (default `R`). While
+  driving it keeps a ring of "good" poses (all four wheels on asphalt, up vector z > 0.9, faster than 5 m/s, one every 15 steps); the
+  reset restores the newest pose at least `rewind_ms` (2500) old, zeroes velocity, speed and all rotation rates (the car restarts from rest)
+  and ignores further presses for `cooldown_ms` (1000). Nothing happens when no good pose exists yet (e.g. right after the start). Allowed
+  everywhere (Time Trial included); only the live player car, never a replay. Disabled by default; toggles live from the F9 menu. Known
+  limits: Select is also the game's camera-view button, so each reset cycles the view once; no track geometry is used (a reset can restore a
+  pose close to where the car left the road); lap and timing consequences are not known. `GT_MOD_RESET_FAKE=<step>` holds the button from
+  that player-car step (used by the in-game check, `tools/mod_reset_check.sh`); `GT_MOD_RESET_LOG=1` logs the car's state.
 
 ## Build
 
@@ -46,7 +55,7 @@ ctest --test-dir build
 Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `libanalog_pedals.so` from
 `build/analog-pedals/`) into the game's mods directory (`<build>/mods/` next to `gt_play`, or `GT_MODS_DIR`) and set
 `enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
-gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh`.
+gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh`.
 
 ## Licence
 
