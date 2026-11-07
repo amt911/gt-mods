@@ -17,6 +17,15 @@ Nothing game-derived lives here: only hand-written mod code.
   except below 0.05 (not injected) and 0.05-0.1 (the game's smallest press is 0.1). Only the player's live car is touched (not AI cars, not during a replay).
   `GT_MOD_PEDALS_FAKE=0.5,0.3` replaces the input with a fixed throttle/brake (used by the in-game check);
   `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.
+- `draw-distance` - pushes the race world's far clip plane further away, so far scenery (buildings, hills, grandstands) shows
+  instead of popping in. The game does not cull by that plane (it submits the same geometry and the GPU clips), so a larger far
+  reveals what was already submitted; the cost is GPU pixels, not game CPU. Pre-hook on `0x0890E41C`: `self+0xC` (far, 1200 in
+  the races seen) is multiplied by `far_scale` for the call and put back after it. `far_scale` in `mod.toml`, default `2.5`
+  (1200 -> 3000), range 1.0-6.0 (clamped, a warning is logged; non-numbers keep the default); 1.0 = frames identical to no
+  mod (the mod writes nothing). Larger values thin the depth buffer (a few speckles on far geometry at 8000). The sky pass and
+  the car reflection pass do not use this function and are untouched. Disabled by default; toggles live from the F9 menu.
+  `GT_MOD_DRAWDIST_SCALE=<n>` overrides the setting (used by the in-game check, `tools/mod_drawdist_check.sh`);
+  `GT_MOD_DRAWDIST_LOG=1` logs near/far every 120 edits.
 
 ## Build
 
