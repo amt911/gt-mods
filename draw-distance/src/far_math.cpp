@@ -12,12 +12,13 @@ float clamp_scale(float scale) {
     return scale;
 }
 
-bool parse_scale(const char *text, float *out) {
+bool parse_scale(const char *text, float *out, bool *clamped) {
     if (text == nullptr || *text == '\0') return false;
     char *end = nullptr;
     const double v = std::strtod(text, &end);
     if (end == text || *end != '\0' || !std::isfinite(v)) return false;
     *out = clamp_scale(static_cast<float>(v));
+    if (clamped != nullptr) *clamped = static_cast<double>(*out) != v;
     return true;
 }
 
@@ -25,22 +26,14 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     Settings s;
     const char *text = get("far_scale");
     if (text == nullptr || *text == '\0') return s;
-    char *end = nullptr;
-    const double v = std::strtod(text, &end);
-    if (end == text || *end != '\0' || !std::isfinite(v)) {
+    bool clamped = false;
+    if (!parse_scale(text, &s.far_scale, &clamped)) {
+        s.far_scale = kDefaultScale;
         warn(std::string("far_scale \"") + text + "\" is not a number; using the default");
-        return s;
+    } else if (clamped) {
+        warn(std::string("far_scale \"") + text + "\" is outside [1, 6]; clamped");
     }
-    s.far_scale = clamp_scale(static_cast<float>(v));
-    if (static_cast<double>(s.far_scale) != v) warn(std::string("far_scale \"") + text + "\" is outside [1, 6]; clamped");
     return s;
-}
-
-float scaled_far(float far_plane, float near_plane, float scale) {
-    const float k = clamp_scale(scale);
-    if (k == 1.0f) return far_plane;
-    if (!std::isfinite(far_plane) || !std::isfinite(near_plane) || far_plane <= near_plane || far_plane <= 0.0f) return far_plane;
-    return far_plane * k;
 }
 
 bool needs_edit(float far_plane, float near_plane, float scale) {

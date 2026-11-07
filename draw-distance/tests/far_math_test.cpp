@@ -43,10 +43,9 @@ static void scale_parsing_for_env() {
     assert(parse_scale("100", &v) && v == 6.0f);
     assert(!parse_scale("", &v) && !parse_scale(nullptr, &v) && !parse_scale("x", &v));
 }
-static void scaled_far_multiplies() { assert(scaled_far(1200.0f, 1.3f, 2.5f) == 3000.0f); }
 static void identity_scale_writes_nothing() {
-    assert(scaled_far(1200.0f, 1.3f, 1.0f) == 1200.0f);
     assert(!needs_edit(1200.0f, 1.3f, 1.0f));
+    assert(needs_edit(1200.0f, 1.3f, 2.5f));
 }
 static void unusable_planes_are_left_alone() {
     assert(!needs_edit(NAN, 1.3f, 2.5f));
@@ -55,10 +54,13 @@ static void unusable_planes_are_left_alone() {
     assert(!needs_edit(0.0f, 0.0f, 2.5f));
     assert(!needs_edit(-5.0f, 1.3f, 2.5f));
 }
-static void scaled_far_clamps_the_scale() {
-    assert(scaled_far(1000.0f, 1.0f, 50.0f) == 6000.0f);
-    assert(scaled_far(1000.0f, 1.0f, 0.1f) == 1000.0f);
-    assert(scaled_far(1000.0f, 1.0f, NAN) == 2500.0f);
+static void scale_is_clamped_and_reported() {
+    float v = 0;
+    bool clamped = false;
+    assert(parse_scale("100", &v, &clamped) && v == 6.0f && clamped);
+    assert(parse_scale("0.5", &v, &clamped) && v == 1.0f && clamped);
+    assert(parse_scale("2.5", &v, &clamped) && v == 2.5f && !clamped);
+    assert(parse_scale("6", &v, &clamped) && !clamped);
 }
 
 static void depth_terms(float n, float f, float *m10, float *m14) {
@@ -93,9 +95,26 @@ static void world_depth_is_told_by_its_range() {
     assert(!is_world_depth(NAN, 1.0f) && !is_world_depth(1.0f, 1.0f) && !is_world_depth(-1.0f, 1.0f));
     assert(!is_world_depth(-1.0001f, 0.0f));  // near == 0
 }
+static void world_depth_bounds() {
+    float a, b;
+    // near < 5 and far 300..6000: near and far come back from m10/m14 with float rounding, so the cases sit 1 unit either side
+    depth_terms(1.3f, 301.0f, &a, &b);
+    assert(is_world_depth(a, b));
+    depth_terms(1.3f, 299.0f, &a, &b);
+    assert(!is_world_depth(a, b));
+    depth_terms(1.3f, 5999.0f, &a, &b);
+    assert(is_world_depth(a, b));
+    depth_terms(1.3f, 6001.0f, &a, &b);
+    assert(!is_world_depth(a, b));
+    depth_terms(4.99f, 1200.0f, &a, &b);
+    assert(is_world_depth(a, b));
+    depth_terms(5.01f, 1200.0f, &a, &b);
+    assert(!is_world_depth(a, b));
+}
 
 int main() {
     world_depth_is_told_by_its_range();
+    world_depth_bounds();
     rescale_depth_matches_a_direct_build();
     rescale_depth_identity_and_garbage_write_nothing();
     default_is_two_and_a_half();
@@ -103,9 +122,8 @@ int main() {
     out_of_range_is_clamped_with_a_warning();
     garbage_keeps_the_default();
     scale_parsing_for_env();
-    scaled_far_multiplies();
     identity_scale_writes_nothing();
     unusable_planes_are_left_alone();
-    scaled_far_clamps_the_scale();
+    scale_is_clamped_and_reported();
     return 0;
 }

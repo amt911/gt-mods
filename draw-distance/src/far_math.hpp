@@ -18,14 +18,11 @@ struct Settings {
 // that is not a finite number keeps the default (warn once). `get` returns the mod.toml value or nullptr.
 Settings parse_settings(const std::function<const char *(const char *)> &get, const std::function<void(const std::string &)> &warn);
 
-// A scale from the environment (the in-game check's override): same rules as the setting, nullopt-like false when absent/invalid.
-bool parse_scale(const char *text, float *out);
+// One scale text (a setting or the environment override): false when absent or not a finite number; otherwise *out is the value
+// clamped to [kMinScale, kMaxScale] and *clamped (when given) says whether the text was outside that range.
+bool parse_scale(const char *text, float *out, bool *clamped = nullptr);
 
-// The far plane to give the game for one call: far * scale, clamped scale, or `far` itself when the value is not a usable
-// plane (not finite, <= near, i.e. nothing the mod understands) or the scale is the identity (so 1.0 writes nothing).
-float scaled_far(float far_plane, float near_plane, float scale);
-
-// Whether the call needs an edit at all (scaled_far(...) != far).
+// Whether the call needs an edit at all: a usable plane (finite, far > near, far > 0) and a scale other than 1.
 bool needs_edit(float far_plane, float near_plane, float scale);
 
 // Clamp to [kMinScale, kMaxScale]; NaN -> default.
