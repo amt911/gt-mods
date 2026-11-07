@@ -25,9 +25,31 @@ struct Raw {
     bool left = false, right = false, back = false;  // keyboard
 };
 
-// Target yaw in degrees: 0 = no look. Keys: left -90, right +90 (both cancel), back 180 (wins). R3 or the stick pulled back
-// past `back_threshold`: 180. Otherwise the stick's angle (atan2(x, -y): up 0, right 90, down 180) outside the dead zone.
+// Target yaw in degrees: 0 = no look. Keys: left -90, right +90 (both cancel), back 180 (wins). R3: 180. Otherwise, outside the
+// dead zone, the stick's angle (atan2(x, -y): up 0, right 90, down 180). Pulled back past `back_threshold` the angle blends
+// linearly towards the rear view (+-180, the side of x; w = (y - threshold) / (1 - threshold)), so there is no snap: 180 only at
+// full back. Back-left and back-right are continuous with the rear view.
 float target_yaw(const Raw &raw, const Settings &s);
+
+// "Is the player's view live": physics steps keep arriving. The mod's world-matrix hook runs for every object of every frame; a
+// frame is counted by its orthographic (HUD) upload, which menus and pauses draw too. A step resets the count; the view is live
+// until `max_frames` frames passed without a step (spec: 10), so the test is game-paced, not wall-clock (a slow machine at a few
+// fps keeps the orbit).
+class StepGate {
+  public:
+    explicit StepGate(int max_frames = 10) : max_frames_(max_frames) {}
+    void on_step() { seen_ = true; frames_ = 0; }
+    void on_frame() { if (frames_ <= max_frames_) ++frames_; }
+    bool live() const { return seen_ && frames_ <= max_frames_; }
+
+  private:
+    int max_frames_;
+    int frames_ = 0;
+    bool seen_ = false;
+};
+
+// Nominal game time of one physics step, the smoothing's time base (game frames, not wall time).
+constexpr float kStepMs = 1000.0f / 60.0f;
 
 // First-order smoothing of the yaw towards a target, the short way round (+-180), exact at the end.
 class YawSmoother {

@@ -14,7 +14,8 @@
 //
 // Player-live predicate (same as analog-pedals): the driver entry with vtable 0x08CC1F60, byte +0xA8 == 0 (live, not replay) and
 // +0x6C != 0 (reads the pad); exactly one. It is evaluated in the physics-step hook 0x0894DD9C; the upload hook only edits while
-// a step ran within kStaleMs (a menu, the pause screen, a garage or a replay stops the steps, so the view is left alone there).
+// a step ran within the last 10 frames (StepGate: frames are counted by the HUD's orthographic uploads, so it is game-paced and a slow
+// machine does not flicker to vanilla; a menu, the pause screen, a garage or a replay stops the steps and the view is left alone).
 // The orbit is the identity at yaw 0 and pitch 0: the mod then writes nothing.
 #include "gt_mod/gt_mod_api.h"
 
@@ -23,7 +24,6 @@
 #include "orbit_math.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -45,7 +45,7 @@ constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010;
 constexpr std::uint32_t kSceneCamera = 0x1FA4, kCameraMatrix = 0x10;
 constexpr std::uint32_t kGuBlock = 0x2E0, kGuProj = 0xD04;
 constexpr std::uint32_t kSceneGlobal = 0x08D11F74;  // log only
-constexpr int kStaleMs = 250;
+constexpr int kStaleFrames = 10;  // spec: the step ran within the last 10 frames
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
@@ -59,8 +59,7 @@ std::uint32_t g_player_car = 0, g_scene = 0;
 unsigned g_steps = 0, g_uploads = 0, g_edits = 0, g_rej_flags = 0, g_rej_persp = 0, g_rej_pivot = 0;
 std::uint32_t g_seen[8];
 unsigned g_nseen = 0;
-std::chrono::steady_clock::time_point g_last_step;
-bool g_have_step = false;
+orbit::StepGate g_gate(kStaleFrames);
 float g_last_pivot[3] = {0, 0, 0};
 
 // Finds the live human car of `world`. Exactly one -> its car address, else 0.
@@ -87,12 +86,7 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
 }
 
 void on_step(GtModCtx *c) {
-    const auto now = std::chrono::steady_clock::now();
-    float dt_ms = 16.0f;
-    if (g_have_step) dt_ms = std::min(50.0f, std::chrono::duration<float, std::milli>(now - g_last_step).count());
-    g_last_step = now;
-    g_have_step = true;
-    ++g_steps;
+    g_gate.on_step();
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
     if (g_player_car == 0) {
         g_smoother.reset(0.0f);
@@ -100,7 +94,7 @@ void on_step(GtModCtx *c) {
     } else if (g_fake) {
         g_yaw = g_fake->first;  // the check's fixed angle: exact, no swing
     } else {
-        g_yaw = g_smoother.step(orbit::target_yaw(orbit::read_raw(), g_settings), dt_ms, g_settings.smooth_ms);
+        g_yaw = g_smoother.step(orbit::target_yaw(orbit::read_raw(), g_settings), orbit::kStepMs, g_settings.smooth_ms);
     }
     g_api->call_original(c);
     if (g_log && g_player_car != 0 && g_steps % 60 == 0) {
@@ -155,13 +149,15 @@ bool pivot_view(GtModCtx *c, float out[3]) {
 void on_upload(GtModCtx *c) {
     const GtModApi &a = *g_api;
     if (a.gpr(c, 5) != kWorldCommand) { a.call_original(c); return; }
-    const float pitch = g_fake ? g_fake->second : g_settings.pitch_deg;
-    if (g_player_car == 0 || !g_have_step || !orbit::needs_edit(g_yaw, g_yaw != 0.0f ? pitch : 0.0f)) { a.call_original(c); return; }
-    if (std::chrono::steady_clock::now() - g_last_step > std::chrono::milliseconds(kStaleMs)) { a.call_original(c); return; }
     const std::uint32_t wp = a.gpr(c, 6), pp = a.read32(c, a.gpr(c, 4) + kGuBlock + kGuProj);
+    const bool perspective = pp != 0 && orbit::is_perspective(a.readf(c, pp + 4 * 11));
+    if (pp != 0 && !perspective) g_gate.on_frame();  // the HUD's orthographic upload: once per frame, menus and pauses draw it too
+    const float pitch = g_fake ? g_fake->second : g_settings.pitch_deg;
+    if (!perspective || wp == 0 || g_player_car == 0 || !g_gate.live() || !orbit::needs_edit(g_yaw, g_yaw != 0.0f ? pitch : 0.0f)) {
+        a.call_original(c);
+        return;
+    }
     ++g_uploads;
-    if (wp == 0 || pp == 0) { ++g_rej_flags; a.call_original(c); return; }
-    if (!orbit::is_perspective(a.readf(c, pp + 4 * 11))) { ++g_rej_persp; a.call_original(c); return; }
     float pv[3];
     if (!pivot_view(c, pv)) { ++g_rej_pivot; a.call_original(c); return; }
     g_last_pivot[0] = pv[0]; g_last_pivot[1] = pv[1]; g_last_pivot[2] = pv[2];

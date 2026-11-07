@@ -143,10 +143,43 @@ static void stick_back_or_r3_is_rear_view() {
     Settings s;
     Raw r;
     r.y = 0.9f; assert(target_yaw(r, s) == 180.0f);
-    r.x = 0.3f; r.y = 0.75f; assert(target_yaw(r, s) == 180.0f);
+    r.x = 0.0f; r.y = 1.0f; assert(target_yaw(r, s) == 180.0f);
+    r.x = 0.3f; r.y = 1.0f; assert(near(target_yaw(r, s), 180.0f)); // full back: rear view whatever x
     r = Raw{}; r.r3 = true; assert(target_yaw(r, s) == 180.0f);
     r = Raw{}; r.y = 0.5f; assert(near(std::fabs(target_yaw(r, s)), 180.0f));
 }
+static void back_blend_is_continuous() {
+    Settings s;
+    Raw r;
+    // just below / above the threshold: no jump (the old snap went from ~160 to 180)
+    r.x = 0.3f; r.y = s.back_threshold - 0.001f;
+    const float below = target_yaw(r, s);
+    r.y = s.back_threshold + 0.001f;
+    const float above = target_yaw(r, s);
+    assert(std::fabs(above - below) < 0.5f);
+    r.y = 0.85f; // halfway: between the angle and 180
+    const float mid = target_yaw(r, s);
+    assert(mid > below && mid < 180.0f);
+    // back-left mirrors back-right (sign preserved, so the camera goes round the side of the stick)
+    Raw l; l.x = -0.3f; l.y = 0.85f;
+    assert(near(target_yaw(l, s), -mid));
+    // monotonic in y
+    float prev = -1.0f;
+    for (float y = 0.71f; y <= 1.0f; y += 0.03f) { r.y = y; const float v = target_yaw(r, s); assert(v >= prev); prev = v; }
+}
+static void step_gate_is_game_paced() {
+    StepGate g(10);
+    assert(!g.live());              // no step yet
+    g.on_step(); assert(g.live());
+    for (int i = 0; i < 10; ++i) g.on_frame();
+    assert(g.live());               // 10 frames without a step: still live (slow machine, a hitch)
+    g.on_frame();
+    assert(!g.live());              // 11: the steps stopped (menu, pause, replay)
+    g.on_step(); assert(g.live());  // steps are back
+    for (int i = 0; i < 100000; ++i) g.on_frame();  // no overflow
+    assert(!g.live());
+}
+static void step_time_is_nominal() { assert(near(kStepMs, 16.6667f, 0.001f)); }
 static void keys_set_fixed_targets() {
     Settings s;
     Raw r;
@@ -216,6 +249,9 @@ int main() {
     stick_dead_zone_gives_no_look();
     stick_direction_picks_the_angle();
     stick_back_or_r3_is_rear_view();
+    back_blend_is_continuous();
+    step_gate_is_game_paced();
+    step_time_is_nominal();
     keys_set_fixed_targets();
     smoother_converges_and_snaps();
     smoother_time_constant();

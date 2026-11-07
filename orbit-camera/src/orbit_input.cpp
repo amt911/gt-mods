@@ -1,5 +1,6 @@
 #include "orbit_input.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -55,8 +56,11 @@ float target_yaw(const Raw &raw, const Settings &s) {
     if (raw.left && raw.right) return 0.0f;
     const float mag = std::hypot(raw.x, raw.y);
     if (mag < s.deadzone) return 0.0f;
-    if (raw.y >= s.back_threshold) return 180.0f;
-    return std::atan2(raw.x, -raw.y) * kRadToDeg;
+    const float angle = std::atan2(raw.x, -raw.y) * kRadToDeg;
+    if (raw.y <= s.back_threshold) return angle;
+    const float w = std::min(1.0f, (raw.y - s.back_threshold) / (1.0f - s.back_threshold));
+    const float rear = raw.x < 0.0f ? -180.0f : 180.0f;
+    return angle + w * (rear - angle);
 }
 
 float YawSmoother::step(float target, float dt_ms, float tau_ms) {

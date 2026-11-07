@@ -25,7 +25,11 @@ Nothing game-derived lives here: only hand-written mod code.
   `look_right_keys` / `look_back_keys` (SDL key names, defaults `J` / `L` / `K`, free in gt_play's default bindings). Only while
   driving (live player car, not a replay, not a menu); with no input it writes nothing. Disabled by default; toggles live from the
   F9 menu. `GT_MOD_CAMERA_FAKE=<yaw>[,<pitch>]` fixes the angle (used by the in-game check, `tools/mod_camera_check.sh`);
-  `GT_MOD_CAMERA_LOG=1` logs yaw, scene and pivot once a second.
+  `GT_MOD_CAMERA_LOG=1` logs yaw, scene and pivot once a second. Pulling the stick back blends the angle smoothly into the rear
+  view (full 180 only at full back). The orbit is live while physics steps keep arriving (a gap of 10 frames, counted by the HUD's
+  uploads, ends it). Known limits: in bumper/cockpit views the pivot is the car, which is not exactly at the eye (the camera
+  swings slightly instead of turning in place); the mod opens its own SDL controller handle next to the host's; the look keys
+  (J/K/L) also act while the F9 mod menu is open (the SDK cannot tell whether the menu is open).
 
 ## Build
 
