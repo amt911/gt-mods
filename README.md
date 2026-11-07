@@ -31,7 +31,8 @@ Nothing game-derived lives here: only hand-written mod code.
 - `orbit-camera` - Gran Turismo 7 style orbit camera on the right stick. The stick's direction picks the look direction around the
   player's car (right = +90 deg, left = -90 deg, forward = 0); pulled back (past `back_threshold`) or clicked (R3) = rear view
   (180 deg). The camera swings around the car in chase views and looks around from the seat in bumper/cockpit views (the pivot is
-  the car, which there is ~at the eye); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
+  the car, which there is ~at the eye). Like GT7, in every view except the far (full third-person) chase view the stick turns the
+  other way (`invert_outside_chase`, default true; the far chase view is told by the car's distance from the eye, > 6.5); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
   `smooth_ms` time constant (80) and back to 0 on release; dead zone `deadzone` (0.25). Keyboard: `look_left_keys` /
   `look_right_keys` / `look_back_keys` (SDL key names, defaults `J` / `L` / `K`, free in gt_play's default bindings). Only while
   driving (live player car, not a replay, not a menu); with no input it writes nothing. Disabled by default; toggles live from the
