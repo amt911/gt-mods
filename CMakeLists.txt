@@ -7,4 +7,5 @@ set(GT_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../gran-turismo-decomp/include" CACH
 
 enable_testing()
 add_subdirectory(analog-pedals)
+add_subdirectory(draw-distance)
 add_subdirectory(orbit-camera)
