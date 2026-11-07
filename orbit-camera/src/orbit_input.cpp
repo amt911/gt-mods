@@ -47,7 +47,22 @@ Settings parse_settings(const std::function<const char *(const char *)> &get,
     read_setting(get, warn, "back_threshold", 0.0f, 1.0f, false, &s.back_threshold);
     read_setting(get, warn, "smooth_ms", 0.0f, 5000.0f, true, &s.smooth_ms);
     read_setting(get, warn, "pitch_deg", -45.0f, 45.0f, true, &s.pitch_deg);
+    if (const char *v = get("invert_outside_chase"); v != nullptr) {
+        const std::string t = v;
+        if (t == "true" || t == "1") s.invert_outside_chase = true;
+        else if (t == "false" || t == "0") s.invert_outside_chase = false;
+        else warn("invalid invert_outside_chase = \"" + t + "\", keeping the default");
+    }
     return s;
+}
+
+bool is_full_chase_view(const float pivot[3]) {
+    return std::sqrt(pivot[0] * pivot[0] + pivot[1] * pivot[1] + pivot[2] * pivot[2]) > 6.5f;
+}
+
+float view_yaw(float target, bool chase_view, const Settings &s) {
+    if (chase_view || !s.invert_outside_chase || target == 0.0f) return target;
+    return -target;
 }
 
 float target_yaw(const Raw &raw, const Settings &s) {

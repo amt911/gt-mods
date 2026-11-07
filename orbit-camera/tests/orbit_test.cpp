@@ -122,6 +122,40 @@ static void settings_defaults_and_invalid() {
     for (char ch : warned) n += ch == ';';
     assert(n == 4);
 }
+
+static void invert_outside_chase_setting() {
+    std::map<std::string, std::string> kv;
+    std::string warned;
+    auto get = [&](const char *k) -> const char * { auto it = kv.find(k); return it == kv.end() ? nullptr : it->second.c_str(); };
+    auto warn = [&](const std::string &w) { warned += w + ";"; };
+    assert(parse_settings(get, warn).invert_outside_chase);  // default: GT7-like, on
+    kv["invert_outside_chase"] = "false";
+    assert(!parse_settings(get, warn).invert_outside_chase && warned.empty());
+    kv["invert_outside_chase"] = "true";
+    assert(parse_settings(get, warn).invert_outside_chase && warned.empty());
+    kv["invert_outside_chase"] = "maybe";
+    assert(parse_settings(get, warn).invert_outside_chase && warned.find("invert_outside_chase") != std::string::npos);
+}
+
+static void full_chase_view_by_camera_distance() {
+    // measured (chase route, docs/FACTS of the host repo): far chase ~(0, -1.60, -9.01), near chase ~(0, -1.69, -3.82),
+    // cockpit ~(0.3, -1.02, -0.63), bumper ~(0, -0.94, -0.38), race intro ~(0, -0.2, -4.5)
+    const float far_chase[3] = {0.0f, -1.60f, -9.01f}, near_chase[3] = {0.0f, -1.69f, -3.82f}, bumper[3] = {0.0f, -0.94f, -0.38f};
+    const float intro[3] = {0.36f, -0.44f, -5.30f};
+    assert(is_full_chase_view(far_chase));
+    assert(!is_full_chase_view(near_chase) && !is_full_chase_view(bumper) && !is_full_chase_view(intro));
+}
+
+static void view_yaw_inverts_only_outside_chase() {
+    Settings s;
+    assert(view_yaw(90.0f, true, s) == 90.0f);     // chase view: as the stick says
+    assert(view_yaw(90.0f, false, s) == -90.0f);   // bumper/cockpit/hood: mirrored, stick right looks the other way round
+    assert(view_yaw(-35.0f, false, s) == 35.0f);
+    assert(view_yaw(0.0f, false, s) == 0.0f);      // no look stays the identity (the mod writes nothing)
+    assert(std::fabs(view_yaw(180.0f, false, s)) == 180.0f);  // rear view stays the rear view
+    s.invert_outside_chase = false;
+    assert(view_yaw(90.0f, false, s) == 90.0f);
+}
 static void stick_dead_zone_gives_no_look() {
     Settings s;
     Raw r;
@@ -246,6 +280,9 @@ int main() {
     pivot_in_view_space();
     car_position_to_y_up();
     settings_defaults_and_invalid();
+    invert_outside_chase_setting();
+    view_yaw_inverts_only_outside_chase();
+    full_chase_view_by_camera_distance();
     stick_dead_zone_gives_no_look();
     stick_direction_picks_the_angle();
     stick_back_or_r3_is_rear_view();

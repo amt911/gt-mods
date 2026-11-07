@@ -13,6 +13,7 @@ struct Settings {
     float back_threshold = 0.7f;   // stick pulled back (y, down positive) at least this far = rear view
     float smooth_ms = 80.0f;       // time constant of the swing; 0 = instant
     float pitch_deg = 0.0f;        // constant tilt added while orbiting, -45..45
+    bool invert_outside_chase = true;  // GT7: outside the chase view (bumper/cockpit/hood) the stick turns the other way
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
@@ -30,6 +31,16 @@ struct Raw {
 // linearly towards the rear view (+-180, the side of x; w = (y - threshold) / (1 - threshold)), so there is no snap: 180 only at
 // full back. Back-left and back-right are continuous with the rear view.
 float target_yaw(const Raw &raw, const Settings &s);
+
+// The yaw applied in the current view: `target` in the chase view; mirrored (-target) in the other views when
+// `invert_outside_chase` is set (the user's GT7 behaviour: stick right in the seat views turns the other way). 0 stays 0, 180 stays
+// the rear view.
+float view_yaw(float target, bool chase_view, const Settings &s);
+
+// The full third-person (far chase) view, told by the player car's distance from the eye (`pivot`, view space): ~9.2 there,
+// <= ~5.3 in the near chase, cockpit, bumper and race-intro cameras (all measured; the active camera object is the same for the
+// four driving views, so it cannot tell them apart). Threshold 6.5.
+bool is_full_chase_view(const float pivot[3]);
 
 // "Is the player's view live": physics steps keep arriving. The mod's world-matrix hook runs for every object of every frame; a
 // frame is counted by its orthographic (HUD) upload, which menus and pauses draw too. A step resets the count; the view is live
