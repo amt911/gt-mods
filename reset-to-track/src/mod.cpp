@@ -137,19 +137,19 @@ void on_step(GtModCtx *c) {
     if (pose) {
         restore(c, body, *pose);
         ++g_restores;
-        g_since_restore = 1;
         if (g_log) {
             char line[200];
             std::snprintf(line, sizeof line, "RESTORE step=%u pos=%.2f,%.2f,%.2f yaw=%.3f", g_car_steps, pose->v[0], pose->v[1], pose->v[2], pose->v[14]);
             a.log(g_self, line);
         }
     }
+    if (pose) g_since_restore = 1;  // t = 0 at the restore step
+    else if (g_since_restore != 0) ++g_since_restore;
     a.call_original(c);
     if (g_log) {
         const bool window = g_since_restore != 0 && g_since_restore <= kLogWindow;
         if ((window && g_since_restore % 5 == 1) || (!window && g_car_steps % 30 == 0)) log_state(c, car, body);
     }
-    if (g_since_restore != 0 && !pose) ++g_since_restore;
 }
 
 }  // namespace
