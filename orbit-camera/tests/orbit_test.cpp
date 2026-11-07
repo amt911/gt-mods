@@ -133,7 +133,11 @@ static void invert_outside_chase_setting() {
     assert(!parse_settings(get, warn).invert_outside_chase && warned.empty());
     kv["invert_outside_chase"] = "true";
     assert(parse_settings(get, warn).invert_outside_chase && warned.empty());
-    kv["invert_outside_chase"] = "maybe";
+    kv["invert_outside_chase"] = "0";
+    assert(!parse_settings(get, warn).invert_outside_chase);
+    kv["invert_outside_chase"] = "1";
+    assert(parse_settings(get, warn).invert_outside_chase && warned.empty());
+    kv["invert_outside_chase"] = "maybe";  // invalid: the default (true) is kept, not the value of an earlier key
     assert(parse_settings(get, warn).invert_outside_chase && warned.find("invert_outside_chase") != std::string::npos);
 }
 
@@ -142,8 +146,14 @@ static void full_chase_view_by_camera_distance() {
     // cockpit ~(0.3, -1.02, -0.63), bumper ~(0, -0.94, -0.38), race intro ~(0, -0.2, -4.5)
     const float far_chase[3] = {0.0f, -1.60f, -9.01f}, near_chase[3] = {0.0f, -1.69f, -3.82f}, bumper[3] = {0.0f, -0.94f, -0.38f};
     const float intro[3] = {0.36f, -0.44f, -5.30f};
-    assert(is_full_chase_view(far_chase));
-    assert(!is_full_chase_view(near_chase) && !is_full_chase_view(bumper) && !is_full_chase_view(intro));
+    for (bool was : {false, true}) {
+        assert(is_full_chase_view(far_chase, was));
+        assert(!is_full_chase_view(near_chase, was) && !is_full_chase_view(bumper, was) && !is_full_chase_view(intro, was));
+    }
+    const float d65[3] = {0.0f, 0.0f, -6.5f};  // between the thresholds: keeps the last answer
+    assert(is_full_chase_view(d65, true) && !is_full_chase_view(d65, false));
+    const float d71[3] = {0.0f, 0.0f, -7.1f}, d59[3] = {0.0f, 0.0f, -5.9f};
+    assert(is_full_chase_view(d71, false) && !is_full_chase_view(d59, true));
 }
 
 static void view_yaw_inverts_only_outside_chase() {

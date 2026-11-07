@@ -93,12 +93,19 @@ void on_step(GtModCtx *c) {
     g_gate.on_step();
     ++g_steps;
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
-    float pv[3];
-    const bool chase = pivot_view(c, pv) && orbit::is_full_chase_view(pv);
-    if (g_log && chase != g_chase_view) {
-        char line[160];
-        std::snprintf(line, sizeof line, "view step=%u chase=%d pivot=%.2f,%.2f,%.2f", g_steps, chase ? 1 : 0, pv[0], pv[1], pv[2]);
-        g_api->log(g_self, line);
+    if (g_player_car == 0) g_scene = 0;  // between races: never read a previous race's scene (the refresh sets it again)
+    float pv[3] = {0.0f, 0.0f, 0.0f};
+    // An unreadable pivot keeps the last answer (the first step of a race runs before its scene refresh).
+    const bool chase = pivot_view(c, pv) ? orbit::is_full_chase_view(pv, g_chase_view) : g_chase_view;
+    if (chase != g_chase_view) {
+        // SELECT changed the view: the mirrored target is the same look in the new view, so jump to the mirror of where the
+        // smoother is (the picture changes anyway) instead of swinging 180 degrees through the rear.
+        g_smoother.reset(orbit::view_yaw(orbit::view_yaw(g_smoother.value(), g_chase_view, g_settings), chase, g_settings));
+        if (g_log) {
+            char line[160];
+            std::snprintf(line, sizeof line, "view step=%u chase=%d pivot=%.2f,%.2f,%.2f", g_steps, chase ? 1 : 0, pv[0], pv[1], pv[2]);
+            g_api->log(g_self, line);
+        }
     }
     g_chase_view = chase;
     if (g_player_car == 0) {

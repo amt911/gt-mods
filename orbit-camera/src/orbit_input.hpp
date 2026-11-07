@@ -39,8 +39,8 @@ float view_yaw(float target, bool chase_view, const Settings &s);
 
 // The full third-person (far chase) view, told by the player car's distance from the eye (`pivot`, view space): ~9.2 there,
 // <= ~5.3 in the near chase, cockpit, bumper and race-intro cameras (all measured; the active camera object is the same for the
-// four driving views, so it cannot tell them apart). Threshold 6.5.
-bool is_full_chase_view(const float pivot[3]);
+// four driving views, so it cannot tell them apart). Hysteresis: enters above 7.0, leaves below 6.0 (`was_chase` = last answer).
+bool is_full_chase_view(const float pivot[3], bool was_chase);
 
 // "Is the player's view live": physics steps keep arriving. The mod's world-matrix hook runs for every object of every frame; a
 // frame is counted by its orthographic (HUD) upload, which menus and pauses draw too. A step resets the count; the view is live

@@ -56,8 +56,9 @@ Settings parse_settings(const std::function<const char *(const char *)> &get,
     return s;
 }
 
-bool is_full_chase_view(const float pivot[3]) {
-    return std::sqrt(pivot[0] * pivot[0] + pivot[1] * pivot[1] + pivot[2] * pivot[2]) > 6.5f;
+bool is_full_chase_view(const float pivot[3], bool was_chase) {
+    const float d = std::sqrt(pivot[0] * pivot[0] + pivot[1] * pivot[1] + pivot[2] * pivot[2]);
+    return was_chase ? d >= 6.0f : d > 7.0f;
 }
 
 float view_yaw(float target, bool chase_view, const Settings &s) {
