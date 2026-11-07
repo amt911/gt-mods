@@ -61,7 +61,30 @@ static void scaled_far_clamps_the_scale() {
     assert(scaled_far(1000.0f, 1.0f, NAN) == 2500.0f);
 }
 
+static void depth_terms(float n, float f, float *m10, float *m14) {
+    *m10 = static_cast<float>(-(double(f) + n) / (double(f) - n));
+    *m14 = static_cast<float>(-2.0 * f * n / (double(f) - n));
+}
+static void rescale_depth_matches_a_direct_build() {
+    float a, b, want10, want14, na, nb;
+    depth_terms(1.3f, 1200.0f, &a, &b);
+    depth_terms(1.3f, 3000.0f, &want10, &want14);
+    assert(rescale_depth(a, b, 2.5f, &na, &nb));
+    assert(std::fabs(na - want10) < 1e-6f && std::fabs(nb - want14) < 1e-3f);
+}
+static void rescale_depth_identity_and_garbage_write_nothing() {
+    float a, b, x = 7.0f, y = 8.0f;
+    depth_terms(1.3f, 1200.0f, &a, &b);
+    assert(!rescale_depth(a, b, 1.0f, &x, &y) && x == 7.0f && y == 8.0f);
+    assert(!rescale_depth(NAN, b, 2.5f, &x, &y));
+    assert(!rescale_depth(1.0f, b, 2.5f, &x, &y));   // m10 - 1 == 0
+    assert(!rescale_depth(-1.0f, b, 2.5f, &x, &y));  // m10 + 1 == 0
+    assert(!rescale_depth(0.0f, 0.0f, 2.5f, &x, &y)); // far <= near
+}
+
 int main() {
+    rescale_depth_matches_a_direct_build();
+    rescale_depth_identity_and_garbage_write_nothing();
     default_is_two_and_a_half();
     valid_value_is_kept();
     out_of_range_is_clamped_with_a_warning();

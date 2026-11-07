@@ -48,4 +48,14 @@ bool needs_edit(float far_plane, float near_plane, float scale) {
     return std::isfinite(far_plane) && std::isfinite(near_plane) && far_plane > near_plane && far_plane > 0.0f;
 }
 
+bool rescale_depth(float m10, float m14, float scale, float *new_m10, float *new_m14) {
+    if (!std::isfinite(m10) || !std::isfinite(m14) || m10 + 1.0f == 0.0f || m10 - 1.0f == 0.0f) return false;
+    const float near_plane = m14 / (m10 - 1.0f), far_plane = m14 / (m10 + 1.0f);
+    if (!needs_edit(far_plane, near_plane, scale)) return false;
+    const double n = near_plane, f = static_cast<double>(far_plane) * clamp_scale(scale);
+    *new_m10 = static_cast<float>(-(f + n) / (f - n));
+    *new_m14 = static_cast<float>(-2.0 * f * n / (f - n));
+    return true;
+}
+
 } // namespace drawdist

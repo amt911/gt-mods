@@ -31,4 +31,9 @@ bool needs_edit(float far_plane, float near_plane, float scale);
 // Clamp to [kMinScale, kMaxScale]; NaN -> default.
 float clamp_scale(float scale);
 
+// The depth terms of the game's projection (func_08AF4B4C): m10 = -(far + near) / (far - near), m14 = -2 * far * near / (far - near).
+// rescale_depth recovers near and far from them (near = m14 / (m10 - 1), far = m14 / (m10 + 1)), scales far and writes the new terms.
+// Returns false (outputs untouched) when the terms are not a usable perspective depth range or the scale is the identity.
+bool rescale_depth(float m10, float m14, float scale, float *new_m10, float *new_m14);
+
 } // namespace drawdist

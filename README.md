@@ -19,8 +19,10 @@ Nothing game-derived lives here: only hand-written mod code.
   `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.
 - `draw-distance` - pushes the race world's far clip plane further away, so far scenery (buildings, hills, grandstands) shows
   instead of popping in. The game does not cull by that plane (it submits the same geometry and the GPU clips), so a larger far
-  reveals what was already submitted; the cost is GPU pixels, not game CPU. Pre-hook on `0x0890E41C`: `self+0xC` (far, 1200 in
-  the races seen) is multiplied by `far_scale` for the call and put back after it. `far_scale` in `mod.toml`, default `2.5`
+  reveals what was already submitted; the cost is GPU pixels, not game CPU. Post-hook on the depth builder `0x08AF4B4C` (called from `0x0890E41C`
+  with near = `self+4`, far = `self+0xC` = 1200 in the races seen): the matrix terms m10/m14 are rewritten for `far * far_scale`
+  (scene data is never written; a hook on `0x0890E41C` that scales and restores `self+0xC` does nothing, because `call_original`
+  returns before the rest of that body runs). `far_scale` in `mod.toml`, default `2.5`
   (1200 -> 3000), range 1.0-6.0 (clamped, a warning is logged; non-numbers keep the default); 1.0 = frames identical to no
   mod (the mod writes nothing). Larger values thin the depth buffer (a few speckles on far geometry at 8000). The sky pass and
   the car reflection pass do not use this function and are untouched. Disabled by default; toggles live from the F9 menu.

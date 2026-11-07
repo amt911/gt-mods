@@ -1,12 +1,18 @@
 // draw-distance: pushes the race world's far clip plane further away (gran-turismo-decomp mod SDK, API 1).
 //
-// The race world projection takes its depth range from func_08AF4B4C(matrix, near, far), called by func_0890E41C(self, ...) with
-// near = word(self+4) and far = word(self+0xC) (1200 in the races seen; docs/FACTS.md "draw distance" of the host repo). The game
-// does not cull by that plane: it submits the same geometry and the GE only clips, so a larger far shows scenery that was already
-// there. The sky pass and the car reflection pass do not go through this function.
+// The race world projection gets its depth range from func_08AF4B4C(matrix, near, far), called by func_0890E41C(self, ...) (return
+// addresses 0x0890E4B4 for the mode 0 path, 0x0890E4D0 for the other) with near = word(self+4) and far = word(self+0xC) (1200 in the
+// races seen; docs/FACTS.md "draw distance" of the host repo). The game does not cull by that plane: it submits the same geometry
+// and the GE only clips, so a larger far shows scenery that was already there. The sky pass and the car reflection pass (far 100,
+// caller 0x0889C014) are other calls and are not touched.
 //
-// Hook: 0x0890E41C. Multiply self+0xC by far_scale, run the original, put the original value back (scene data stays untouched).
-// A disabled mod (F9 menu) never reaches this code: the loader's trampoline passes straight to the original.
+// Why the hook is on 0x08AF4B4C and not on 0x0890E41C: in this runtime call_original returns before the rest of a function body
+// runs (the body continues after the hook returned: observed, 0x0890E41C's call to 0x08AF4B4C ran after a hook's restore), so
+// "scale self+0xC, call the original, restore" changes nothing. 0x08AF4B4C is a leaf that only writes the two depth terms
+// m10 = -(far + near) / (far - near) and m14 = -2 far near / (far - near) into its matrix (a0) from f12 = near, f13 = far; float
+// registers are not reachable from a hook, so the hook lets it run and then rewrites m10/m14 for far * far_scale (near is
+// recovered from the terms). Nothing else is touched: scene data keeps its 1200, a disabled mod (F9 menu: the loader's trampoline
+// passes straight to the original) leaves the game as it was, and far_scale 1.0 writes nothing.
 #include "gt_mod/gt_mod_api.h"
 
 #include "far_math.hpp"
@@ -14,13 +20,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 
 namespace {
 
-constexpr std::uint32_t kProjection = 0x0890E41C;  // a0 = self (scene fog/sky settings object)
-constexpr std::uint32_t kNear = 4, kFar = 0xC;
+constexpr std::uint32_t kDepth = 0x08AF4B4C;  // a0 = matrix, f12 = near, f13 = far
+constexpr std::uint32_t kCallerMode0 = 0x0890E4B4, kCallerOther = 0x0890E4D0;  // return addresses inside 0x0890E41C
+constexpr std::uint32_t kM10 = 0x28, kM14 = 0x38;
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
@@ -28,41 +34,36 @@ drawdist::Settings g_settings;
 bool g_log = false;
 unsigned g_calls = 0, g_edits = 0;
 
-std::uint32_t bits(float f) {
-    std::uint32_t u;
-    std::memcpy(&u, &f, sizeof u);
-    return u;
+bool env_set(const char *name) {
+    const char *v = std::getenv(name);
+    return v != nullptr && *v != '\0';
 }
 
-void on_projection(GtModCtx *c) {
+void on_depth(GtModCtx *c) {
     const GtModApi &a = *g_api;
-    const std::uint32_t self = a.gpr(c, 4);
-    ++g_calls;
-    if (self == 0) {
-        a.call_original(c);
-        return;
-    }
-    const float near_plane = a.readf(c, self + kNear), far_plane = a.readf(c, self + kFar);
-    if (!drawdist::needs_edit(far_plane, near_plane, g_settings.far_scale)) {
-        a.call_original(c);
-        return;
-    }
-    const float edited = drawdist::scaled_far(far_plane, near_plane, g_settings.far_scale);
-#if defined(DRAW_DISTANCE_SABOTAGE) && DRAW_DISTANCE_SABOTAGE == 1
-    // sabotage: also scale the near plane (self+4); the in-game composition check must fail
-    a.writef(c, self + kNear, near_plane * g_settings.far_scale);
-#endif
-    a.writef(c, self + kFar, edited);
-    ++g_edits;
+    const std::uint32_t ra = a.gpr(c, 31), matrix = a.gpr(c, 4);
+    const bool world = (ra == kCallerMode0 || ra == kCallerOther) && matrix != 0;
     a.call_original(c);
-    // Restore only what we wrote: if the callee changed the value itself, that is the scene's own business.
-    if (bits(a.readf(c, self + kFar)) == bits(edited)) a.writef(c, self + kFar, far_plane);
+    if (!world) return;
+    ++g_calls;
+    const float m10 = a.readf(c, matrix + kM10), m14 = a.readf(c, matrix + kM14);
+    float n10 = 0, n14 = 0;
+    if (!drawdist::rescale_depth(m10, m14, g_settings.far_scale, &n10, &n14)) return;
 #if defined(DRAW_DISTANCE_SABOTAGE) && DRAW_DISTANCE_SABOTAGE == 1
-    a.writef(c, self + kNear, near_plane);
+    // sabotage: the near plane scaled too (x far_scale again; a mod that changes near must fail the in-game composition check)
+    {
+        const float k = g_settings.far_scale * 6.0f, near_plane = m14 / (m10 - 1.0f) * k, far_plane = m14 / (m10 + 1.0f) * g_settings.far_scale;
+        n10 = -(far_plane + near_plane) / (far_plane - near_plane);
+        n14 = -2.0f * far_plane * near_plane / (far_plane - near_plane);
+    }
 #endif
-    if (g_log && g_edits % 120 == 1) {
-        char line[160];
-        std::snprintf(line, sizeof line, "self=%08X near=%.3f far=%.1f -> %.1f calls=%u edits=%u", self, near_plane, far_plane, edited, g_calls, g_edits);
+    a.writef(c, matrix + kM10, n10);
+    a.writef(c, matrix + kM14, n14);
+    ++g_edits;
+    if (g_log && g_edits % 240 == 1) {
+        char line[200];
+        std::snprintf(line, sizeof line, "caller=%08X far %.1f -> %.1f near %.3f (calls=%u edits=%u)", ra, static_cast<double>(m14 / (m10 + 1.0f)),
+                      static_cast<double>(n14 / (n10 + 1.0f)), static_cast<double>(n14 / (n10 - 1.0f)), g_calls, g_edits);
         a.log(g_self, line);
     }
 }
@@ -77,9 +78,9 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     // The in-game check's override (several scales without rewriting mod.toml).
     float forced = 0;
     if (drawdist::parse_scale(std::getenv("GT_MOD_DRAWDIST_SCALE"), &forced)) g_settings.far_scale = forced;
-    g_log = std::getenv("GT_MOD_DRAWDIST_LOG") != nullptr;
+    g_log = env_set("GT_MOD_DRAWDIST_LOG");
     char line[96];
     std::snprintf(line, sizeof line, "far_scale=%.3f", static_cast<double>(g_settings.far_scale));
     api->log(self, line);
-    return api->hook(self, kProjection, on_projection);
+    return api->hook(self, kDepth, on_depth);
 }
