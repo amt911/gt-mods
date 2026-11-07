@@ -1,7 +1,7 @@
 // draw-distance: pushes the race world's far clip plane further away (gran-turismo-decomp mod SDK, API 1).
 //
 // The race world projection gets its depth range from func_08AF4B4C(matrix, near, far), called by func_0890E41C(self, ...) (return
-// addresses 0x0890E4B4 for the mode 0 path, 0x0890E4D0 for the other) with near = word(self+4) and far = word(self+0xC) (1200 in the
+// addresses 0x0890E4B4 for the mode 0 path, 0x0890E4D0 for the other in --decomp off) with near = word(self+4) and far = word(self+0xC) (1200 in the
 // races seen; docs/FACTS.md "draw distance" of the host repo). The game does not cull by that plane: it submits the same geometry
 // and the GE only clips, so a larger far shows scenery that was already there. The sky pass and the car reflection pass (far 100,
 // caller 0x0889C014) are other calls and are not touched.
@@ -25,14 +25,14 @@
 namespace {
 
 constexpr std::uint32_t kDepth = 0x08AF4B4C;  // a0 = matrix, f12 = near, f13 = far
-constexpr std::uint32_t kCallerMode0 = 0x0890E4B4, kCallerOther = 0x0890E4D0;  // return addresses inside 0x0890E41C
 constexpr std::uint32_t kM10 = 0x28, kM14 = 0x38;
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
 drawdist::Settings g_settings;
 bool g_log = false;
-unsigned g_calls = 0, g_edits = 0;
+unsigned g_calls = 0, g_edits = 0, g_nra = 0;
+std::uint32_t g_ras[8];
 
 bool env_set(const char *name) {
     const char *v = std::getenv(name);
@@ -42,11 +42,24 @@ bool env_set(const char *name) {
 void on_depth(GtModCtx *c) {
     const GtModApi &a = *g_api;
     const std::uint32_t ra = a.gpr(c, 31), matrix = a.gpr(c, 4);
-    const bool world = (ra == kCallerMode0 || ra == kCallerOther) && matrix != 0;
     a.call_original(c);
-    if (!world) return;
-    ++g_calls;
+    if (matrix == 0) return;
     const float m10 = a.readf(c, matrix + kM10), m14 = a.readf(c, matrix + kM14);
+    // The world pass is told by its depth range, not by the return address (0x0890E4B4 / 0x0890E4D0 in --decomp off, but another
+    // address with --decomp on, where the decompiled caller reaches here through the dispatcher): the car reflection pass is
+    // near 0.1 / far 100 (caller 0x0889C014); the race world is near ~1.3 / far ~1200 (is_world_depth).
+    if (!drawdist::is_world_depth(m10, m14)) return;
+    ++g_calls;
+    if (g_log && g_nra < 8) {
+        bool seen = false;
+        for (unsigned i = 0; i < g_nra; ++i) seen = seen || g_ras[i] == ra;
+        if (!seen) {
+            g_ras[g_nra++] = ra;
+            char line[96];
+            std::snprintf(line, sizeof line, "world depth call from ra=%08X", ra);
+            a.log(g_self, line);
+        }
+    }
     float n10 = 0, n14 = 0;
     if (!drawdist::rescale_depth(m10, m14, g_settings.far_scale, &n10, &n14)) return;
 #if defined(DRAW_DISTANCE_SABOTAGE) && DRAW_DISTANCE_SABOTAGE == 1

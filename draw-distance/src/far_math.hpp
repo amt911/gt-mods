@@ -36,4 +36,9 @@ float clamp_scale(float scale);
 // Returns false (outputs untouched) when the terms are not a usable perspective depth range or the scale is the identity.
 bool rescale_depth(float m10, float m14, float scale, float *new_m10, float *new_m14);
 
+// Whether depth terms belong to the race world pass: a usable perspective range with near < kWorldMaxNear and far in
+// [kWorldMinFar, kWorldMaxFar] (the car reflection pass is 0.1 / 100, the sky pass 20-33 / 30000: both out).
+constexpr float kWorldMaxNear = 5.0f, kWorldMinFar = 300.0f, kWorldMaxFar = 6000.0f;
+bool is_world_depth(float m10, float m14);
+
 } // namespace drawdist

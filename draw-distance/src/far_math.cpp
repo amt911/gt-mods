@@ -58,4 +58,10 @@ bool rescale_depth(float m10, float m14, float scale, float *new_m10, float *new
     return true;
 }
 
+bool is_world_depth(float m10, float m14) {
+    if (!std::isfinite(m10) || !std::isfinite(m14) || m10 + 1.0f == 0.0f || m10 - 1.0f == 0.0f) return false;
+    const float n = m14 / (m10 - 1.0f), f = m14 / (m10 + 1.0f);
+    return std::isfinite(n) && std::isfinite(f) && n > 0.0f && n < kWorldMaxNear && f >= kWorldMinFar && f <= kWorldMaxFar;
+}
+
 } // namespace drawdist

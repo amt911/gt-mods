@@ -82,7 +82,20 @@ static void rescale_depth_identity_and_garbage_write_nothing() {
     assert(!rescale_depth(0.0f, 0.0f, 2.5f, &x, &y)); // far <= near
 }
 
+static void world_depth_is_told_by_its_range() {
+    float a, b;
+    depth_terms(1.3f, 1200.0f, &a, &b);
+    assert(is_world_depth(a, b));
+    depth_terms(0.1f, 100.0f, &a, &b);  // car reflection pass
+    assert(!is_world_depth(a, b));
+    depth_terms(33.0f, 30000.0f, &a, &b);  // sky pass
+    assert(!is_world_depth(a, b));
+    assert(!is_world_depth(NAN, 1.0f) && !is_world_depth(1.0f, 1.0f) && !is_world_depth(-1.0f, 1.0f));
+    assert(!is_world_depth(-1.0001f, 0.0f));  // near == 0
+}
+
 int main() {
+    world_depth_is_told_by_its_range();
     rescale_depth_matches_a_direct_build();
     rescale_depth_identity_and_garbage_write_nothing();
     default_is_two_and_a_half();
