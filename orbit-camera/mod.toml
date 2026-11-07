@@ -10,6 +10,8 @@ deadzone = "0.25"
 back_threshold = "0.7"
 smooth_ms = 80
 pitch_deg = "0"
+# GT7: in the bumper, cockpit and near-chase views the stick turns the other way (far chase as the stick says)
+invert_outside_chase = true
 look_left_keys = "J"
 look_right_keys = "L"
 look_back_keys = "K"

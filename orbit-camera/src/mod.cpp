@@ -62,6 +62,9 @@ std::uint32_t g_seen[8];
 unsigned g_nseen = 0;
 orbit::StepGate g_gate(kStaleFrames);
 float g_last_pivot[3] = {0, 0, 0};
+bool g_chase_view = false;  // the full third-person view (orbit_input.hpp is_full_chase_view), evaluated each step
+
+bool pivot_view(GtModCtx *c, float out[3]);
 
 // Finds the live human car of `world`. Exactly one -> its car address, else 0.
 std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
@@ -90,19 +93,36 @@ void on_step(GtModCtx *c) {
     g_gate.on_step();
     ++g_steps;
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
+    if (g_player_car == 0) g_scene = 0;  // between races: never read a previous race's scene (the refresh sets it again)
+    float pv[3] = {0.0f, 0.0f, 0.0f};
+    // An unreadable pivot keeps the last answer (the first step of a race runs before its scene refresh).
+    const bool chase = pivot_view(c, pv) ? orbit::is_full_chase_view(pv, g_chase_view) : g_chase_view;
+    if (chase != g_chase_view) {
+        // SELECT changed the view: the mirrored target is the same look in the new view, so jump to the mirror of where the
+        // smoother is (the picture changes anyway) instead of swinging 180 degrees through the rear.
+        g_smoother.reset(orbit::view_yaw(orbit::view_yaw(g_smoother.value(), g_chase_view, g_settings), chase, g_settings));
+        if (g_log) {
+            char line[160];
+            std::snprintf(line, sizeof line, "view step=%u chase=%d pivot=%.2f,%.2f,%.2f", g_steps, chase ? 1 : 0, pv[0], pv[1], pv[2]);
+            g_api->log(g_self, line);
+        }
+    }
+    g_chase_view = chase;
     if (g_player_car == 0) {
         g_smoother.reset(0.0f);
         g_yaw = 0.0f;
     } else if (g_fake) {
-        g_yaw = g_fake->first;  // the check's fixed angle: exact, no swing
+        g_yaw = orbit::view_yaw(g_fake->first, g_chase_view, g_settings);  // the check's fixed stick angle: exact, no swing
     } else {
-        g_yaw = g_smoother.step(orbit::target_yaw(orbit::read_raw(), g_settings), orbit::kStepMs, g_settings.smooth_ms);
+        const float target = orbit::view_yaw(orbit::target_yaw(orbit::read_raw(), g_settings), g_chase_view, g_settings);
+        g_yaw = g_smoother.step(target, orbit::kStepMs, g_settings.smooth_ms);
     }
     g_api->call_original(c);
     if (g_log && g_player_car != 0 && g_steps % 60 == 0) {
-        char line[240];
-        std::snprintf(line, sizeof line, "step=%u yaw=%.2f scene=%08X global=%08X pivot=%.2f,%.2f,%.2f uploads=%u edits=%u rej(flags/ortho/pivot)=%u/%u/%u", g_steps, g_yaw,
-                      g_scene, g_api->read32(c, kSceneGlobal), g_last_pivot[0], g_last_pivot[1], g_last_pivot[2], g_uploads, g_edits, g_rej_flags, g_rej_persp, g_rej_pivot);
+        char line[280];
+        const std::uint32_t cam = g_scene != 0 ? g_api->read32(c, g_scene + kSceneCamera) : 0;
+        std::snprintf(line, sizeof line, "step=%u yaw=%.2f chase=%d scene=%08X cam=%08X global=%08X pivot=%.2f,%.2f,%.2f uploads=%u edits=%u rej(flags/ortho/pivot)=%u/%u/%u", g_steps, g_yaw,
+                      g_chase_view ? 1 : 0, g_scene, cam, g_api->read32(c, kSceneGlobal), g_last_pivot[0], g_last_pivot[1], g_last_pivot[2], g_uploads, g_edits, g_rej_flags, g_rej_persp, g_rej_pivot);
         g_api->log(g_self, line);
     }
 }

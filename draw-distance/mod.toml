@@ -1,0 +1,9 @@
+id = "draw-distance"
+name = "Draw distance"
+version = "0.1.0"
+library = "libdraw_distance.so"
+api = 1
+enabled = false
+
+[settings]
+far_scale = "2.5"
