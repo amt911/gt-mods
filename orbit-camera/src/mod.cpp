@@ -39,6 +39,7 @@ constexpr std::uint32_t kStep = 0x0894DD9C;          // a0 = world
 constexpr std::uint32_t kSceneRefresh = 0x08928A80;  // a0 = scene object S
 constexpr std::uint32_t kUpload = 0x08B59210;        // a0 = GU object, a1 = command, a2 = matrix: the GE-list writer of 0x08B59508
 constexpr std::uint32_t kWorldCommand = 0x3A;
+constexpr std::uint32_t kGuObject = 0x08D6CE00;  // the graphics library context (this of 0x08B59508)
 constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
 constexpr std::uint32_t kEntryReplay = 0xA8, kEntryInput = 0x6C;
 constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010;
@@ -87,6 +88,7 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
 
 void on_step(GtModCtx *c) {
     g_gate.on_step();
+    ++g_steps;
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
     if (g_player_car == 0) {
         g_smoother.reset(0.0f);
@@ -148,7 +150,8 @@ bool pivot_view(GtModCtx *c, float out[3]) {
 // has already restored the matrix. 0x08B59210 is a leaf that reads a2 and returns, so the edit-call-restore is complete here.
 void on_upload(GtModCtx *c) {
     const GtModApi &a = *g_api;
-    if (a.gpr(c, 5) != kWorldCommand) { a.call_original(c); return; }
+    // Only the GU context (a0 = 0x08D6CE00, FACTS): other callers of 0x08B59210 pass other objects, whose fields must not be read.
+    if (a.gpr(c, 5) != kWorldCommand || a.gpr(c, 4) != kGuObject) { a.call_original(c); return; }
     const std::uint32_t wp = a.gpr(c, 6), pp = a.read32(c, a.gpr(c, 4) + kGuBlock + kGuProj);
     const bool perspective = pp != 0 && orbit::is_perspective(a.readf(c, pp + 4 * 11));
     if (pp != 0 && !perspective) g_gate.on_frame();  // the HUD's orthographic upload: once per frame, menus and pauses draw it too
