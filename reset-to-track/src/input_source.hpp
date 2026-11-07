@@ -1,4 +1,4 @@
-// Where the reset-to-track mod reads its button: the first SDL game controller's Select (BACK) and keyboard keys.
+// Where the reset-to-track mod reads its button: keyboard keys (the pad's Select comes from the game's own pad buffer, see mod.cpp).
 #pragma once
 
 namespace reset {
@@ -6,8 +6,7 @@ namespace reset {
 // Comma-separated SDL key names ("R"). Unknown names are skipped.
 void configure_keys(const char *keys);
 
-// Is the button held right now. SDL is read at hook time (SDL_GameControllerGetButton takes the joystick lock, SDL_GetKeyboardState
-// is a plain cached array: both are meant to be read while another thread pumps events).
+// Is a configured key held right now (SDL_GetKeyboardState is a plain cached array, meant to be read while another thread pumps events).
 bool button_held();
 
 }  // namespace reset
