@@ -94,7 +94,13 @@ void on_step(GtModCtx *c) {
     ++g_steps;
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
     float pv[3];
-    g_chase_view = pivot_view(c, pv) && orbit::is_full_chase_view(pv);
+    const bool chase = pivot_view(c, pv) && orbit::is_full_chase_view(pv);
+    if (g_log && chase != g_chase_view) {
+        char line[160];
+        std::snprintf(line, sizeof line, "view step=%u chase=%d pivot=%.2f,%.2f,%.2f", g_steps, chase ? 1 : 0, pv[0], pv[1], pv[2]);
+        g_api->log(g_self, line);
+    }
+    g_chase_view = chase;
     if (g_player_car == 0) {
         g_smoother.reset(0.0f);
         g_yaw = 0.0f;
