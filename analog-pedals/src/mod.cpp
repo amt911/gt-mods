@@ -176,6 +176,8 @@ void on_fill_record(GtModCtx *c) {
 void on_clamp_record(GtModCtx *c) {
     g_api->call_original(c);
     if (g_player_car == 0) return;
+    // With the host's F9/F10 overlay open the pad is hidden from the game (host repo, docs/MODS.md): the trigger and the keys must not drive the car either.
+    if (g_api->version >= GT_MOD_API_VERSION_2 && g_api->is_menu_open(g_self) != 0) return;
     const std::uint32_t record = g_api->gpr(c, 4);
     // Provable player record: the human car's step calls 0x08948B78 once, with the buffer 0x0894DD9C keeps for it.
     const bool proven = g_fill_was_player;
@@ -197,7 +199,7 @@ void on_clamp_record(GtModCtx *c) {
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version != GT_MOD_API_VERSION) return 1;
+    if (api == nullptr || api->version < GT_MOD_API_VERSION) return 1;  // api 2 (mod.toml) adds is_menu_open; an api 1 host still works
     g_api = api;
     g_self = self;
     g_settings = pedals::parse_settings([&](const char *k) { return api->config(self, k); },
