@@ -155,7 +155,10 @@ void on_flag_read(GtModCtx *c) {
     if (lift) g_api->set_gpr(c, 2, 1);
 }
 
-void on_step(GtModCtx *c) {
+// Everything that reads the player car. A read outside PSP RAM throws (the host's psprecomp::Error); the world/slot pointers can hold stale
+// values once a race is over, and an exception out of a hook would abort the game, so on_step treats it as "no player car" (defensive: the
+// `--decomp on` abort seen ~12000 steps after the route is in the game's own func_08BD4270, not here; docs/FINDINGS.md).
+void step_body(GtModCtx *c) {
     const GtModApi &a = *g_api;
     const std::uint32_t car = find_player_car(c, a.gpr(c, 4));
     const std::uint32_t body = car != 0 ? a.read32(c, car + kBody) : 0;
@@ -164,7 +167,6 @@ void on_step(GtModCtx *c) {
         g_car = 0;
         g_car_steps = 0;
         g_have_prev_vel = false;
-        a.call_original(c);
         return;
     }
     if (car != g_car) {  // a new race: the car's address changed
@@ -224,7 +226,18 @@ void on_step(GtModCtx *c) {
         if (want != rate) a.writef(c, body + kRollRate, want);
     }
     if (g_log && (g_car_steps % 30 == 0 || (g_impulses != 0 && g_since_impulse < 150 && g_car_steps % 3 == 0))) log_state(c, body, held);
-    a.call_original(c);
+}
+
+void on_step(GtModCtx *c) {
+    try {
+        step_body(c);
+    } catch (...) {  // an unreadable car: treat it as no player car
+        g_tracker->reset();
+        g_car = 0;
+        g_car_steps = 0;
+        g_have_prev_vel = false;
+    }
+    g_api->call_original(c);
 }
 
 }  // namespace
