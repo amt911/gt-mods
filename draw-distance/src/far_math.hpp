@@ -6,7 +6,7 @@
 
 namespace drawdist {
 
-constexpr float kDefaultScale = 2.5f;
+constexpr float kDefaultScale = 1.5f;
 constexpr float kMinScale = 1.0f;
 constexpr float kMaxScale = 6.0f;
 
