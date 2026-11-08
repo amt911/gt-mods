@@ -57,6 +57,12 @@ Nothing game-derived lives here: only hand-written mod code.
   lap counter and timer are not rewound (measured on a mid-lap reset: HUD 0'24.000 -> 0'27.000 over 3 s of play, lap 1/2 unchanged), and a reset that crosses the start/finish line was not tested (no route completes a lap) and may
   count the lap twice; a Time Trial ghost / replay recording will show the jump (untested); no track geometry is used, the car goes back
   where it was, not to the nearest asphalt. `GT_MOD_RESET_FAKE=<step>` holds the button from that player-car step (a debugging aid); `GT_MOD_RESET_LOG=1` logs the car's state (used by `tools/mod_reset_check.sh`).
+- `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees). Hooks the flag reader
+  `0x0894CCB8` (a dormant switch) to lift the clamp and adds a roll rate on a hard side impact (a lateral velocity change above `threshold`
+  in one physics step; `gain`, `cap`, `style = realistic|arcade` in `mod.toml`); the dormant flip state machine the flag would also wake
+  (the car sinks through the road and pops back up) is kept asleep. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
+  See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
+
 ## Build
 
 Needs a `gran-turismo-decomp` checkout for the SDK header (default `../gran-turismo-decomp/include`):
@@ -72,7 +78,7 @@ ctest --test-dir build
 Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `libanalog_pedals.so` from
 `build/analog-pedals/`) into the game's mods directory (`<build>/mods/` next to `gt_play`, or `GT_MODS_DIR`) and set
 `enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
-gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh`.
+gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh` / `tools/mod_rollover_check.sh`.
 
 ## Licence
 
