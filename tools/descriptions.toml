@@ -1,0 +1,9 @@
+# One-line description per mod id, shown in the in-game GET MODS page and written into index.json.
+# It lives here, not in mod.toml, because the host's manifest reader rejects unknown keys.
+[descriptions]
+analog-pedals = "Analog triggers and keyboard keys mapped to throttle and brake (0..1)."
+cheats = "Race-time cheats in the F9 menu: slow motion and frozen AI cars."
+draw-distance = "Pushes the race world's far clip plane further away so far scenery shows instead of popping in."
+orbit-camera = "Gran Turismo 7 style orbit camera on the right stick."
+reset-to-track = "One button puts the player's car back on the road, upright and facing the way it was going."
+rollover = "Lets the player's car roll over after a hard side impact, which the stock game cannot."
