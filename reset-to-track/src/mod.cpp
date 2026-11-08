@@ -1,4 +1,4 @@
-// reset-to-track: one button puts the player's car back on the road (gran-turismo-decomp mod SDK, API 1).
+// reset-to-track: one button puts the player's car back on the road (gran-turismo-decomp mod SDK, API 2).
 //
 // How it works (docs/FACTS.md of the host repo, "reset to track"): 0x0894DD9C(world) steps every car once per physics step. The
 // player car is picked with the orbit-camera predicate (driver entry vtable 0x08CC1F60, +0xA8 == 0 live, +0x6C != 0 reads the pad,
@@ -10,6 +10,11 @@
 // a pose goes into a ring every 15 steps. When the button has been held 0.5 s, the newest pose at least 2.5 s old is written back and
 // the car's velocity, speed and rates are zeroed (it restarts from rest), then the original step runs. With no button the hook only
 // reads. A mod switched off in the F9 menu never reaches this code (the host passes the hook straight to the original).
+//
+// Look-ahead rule (0.2.0): a pose enters the ring only if the straight line ahead along its heading stays on asphalt for `ahead_m` (40 m) (the
+// game's own road query, called from the vblank tick on a private 256-byte guest block, see RoadProbe); a pose that fails, or any pose
+// when the query cannot be made, is never restored: with nothing eligible the button does nothing. This keeps the "good" pose that
+// cuts diagonally across the track toward the edge (4/4 asphalt, upright, calm) from putting the car out of bounds again.
 //
 // Button: pad Select held, or a keyboard key (`reset_keys`, default R). Select is read from the pad buffer the game itself reads: the
 // import stub of sceCtrlReadBufferPositive (0x08C7ABF0, a0 = buffer, a1 = count, v0 = samples read; sample +4 = buttons, bit 0 =
@@ -31,6 +36,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -46,6 +52,11 @@ constexpr std::uint32_t kPoseOffsets[reset::kPoseFloats] = {0x10, 0x14, 0x18, 0x
 constexpr std::uint32_t kZeroed[] = {0x6C4, 0x6CC, 0x6D0, 0x6D4};                  // speed, velocity
 constexpr std::uint32_t kZeroedRates[] = {0x6E4, 0x6E8, 0x6F0, 0x6F4, 0x6F8};       // angular rates
 constexpr unsigned kLogWindow = 720;  // steps after a restore that the log follows
+
+constexpr std::uint32_t kAllocPartition = 0x08C7A968;  // import stub sceKernelAllocPartitionMemory (SysMemUserForUser 0x237DBD4F)
+constexpr std::uint32_t kBlockHead = 0x08C7A970;       // sceKernelGetBlockHeadAddr (0x9D9A5BA1)
+constexpr std::uint32_t kRoadObjVtable = 0x14, kRoadQuerySlot = 8;  // roadobj = word(word(car)+0x14); query = word(word(roadobj)+8)
+constexpr std::uint32_t kRecWords = 14;                // a road record is 0x38 bytes
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
@@ -65,6 +76,11 @@ unsigned g_car_steps = 0;       // steps of the current player car
 unsigned g_since_restore = 0;   // 0 = none yet; else steps since the last restore + 1
 unsigned g_restores = 0;
 int g_sabotage = 0;
+std::uint32_t g_scratch = 0;     // private guest block for the road query's record (0 = not allocated yet)
+bool g_scratch_failed = false;
+bool g_qlog = false;  // GT_MOD_RESET_QLOG=1: one AHEADQ line per road query (debugging)
+float g_ahead_m = reset::kAheadMeters;
+unsigned g_ahead_checked = 0, g_ahead_rejected = 0;
 
 std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
     const GtModApi &a = *g_api;
@@ -193,7 +209,7 @@ void on_step(GtModCtx *c) {
     ++g_car_steps;
     g_steps_atomic = g_car_steps;
     const bool held = g_fake ? reset::fake_held(g_car_steps, *g_fake) : (g_select_held.load() || reset::button_held());
-    std::optional<reset::Pose> pose = g_resetter->step(read_sample(c, car, body), read_pose(c, body), held);
+    std::optional<reset::Pose> pose = g_resetter->step(read_sample(c, car, body), read_pose(c, body), held, a.read32(c, body + 0x690), a.read32(c, body + 0x694));
     if (pose) {
         restore(c, body, *pose);
         ++g_restores;
@@ -212,22 +228,100 @@ void on_step(GtModCtx *c) {
     }
 }
 
+// The block the query records go to: allocated once, from the tick, with the game's own partition allocator (a real allocation, so no
+// game code ever points into it). 256 bytes (the allocator's granule). On failure the mod keeps rejecting poses (fails safe).
+bool ensure_scratch(GtModCtx *c) {
+    if (g_scratch != 0) return true;
+    if (g_scratch_failed) return false;
+    const GtModApi &a = *g_api;
+    const std::uint32_t args[5] = {2, 0, 0, 64, 0};  // partition 2 (user), no name, low block, 64 bytes, no fixed address
+    std::uint32_t uid = 0, addr = 0;
+    if (a.call_guest(c, kAllocPartition, args, 5, &uid) != 0 || uid == 0 || uid >= 0x80000000u ||
+        a.call_guest(c, kBlockHead, &uid, 1, &addr) != 0 || addr == 0) {
+        g_scratch_failed = true;
+        a.log(g_self, "look-ahead: could not allocate the scratch record; no pose will be restored");
+        return false;
+    }
+    g_scratch = addr;
+    return true;
+}
+
+// Vblank tick (API 2): runs the look-ahead rule on the poses the step hook queued and hands the passing ones to the ring.
+void on_tick(GtModCtx *c) {
+    if (!g_resetter) return;
+    if (g_car == 0) return;
+    const GtModApi &a = *g_api;
+    std::vector<reset::Resetter::Candidate> pending = g_resetter->take_pending();
+    if (pending.empty()) return;
+    const std::uint32_t car = g_car, body = a.read32(c, car + kBody);
+    const std::uint32_t roadobj = a.read32(c, a.read32(c, car) + kRoadObjVtable);
+    const std::uint32_t fn = roadobj != 0 ? a.read32(c, a.read32(c, roadobj) + kRoadQuerySlot) : 0;
+    const bool can_query = body != 0 && fn != 0 && ensure_scratch(c);
+    float start_z = 0.0f;  // the candidate pose's height (the query is a ray down from 2 m above it)
+    std::uint32_t hint0 = 0, hint1 = 0;  // where the query starts searching: the pose's own words, then those of the last hit (as the game walks along the road)
+    const reset::RoadQuery query = [&](float x, float y, reset::RoadPoint *out) {
+        // the query is a vertical ray down from the given height: input x, start height, -y, the two hint words; output +0x0C = ground,
+        // +0x2C = surface word, v0 = 1 on a hit (FACTS "road query")
+        const std::uint32_t rec = g_scratch;
+        for (std::uint32_t i = 0; i < kRecWords; ++i) a.write32(c, rec + 4 * i, 0);
+        a.writef(c, rec + 0, x);
+        a.writef(c, rec + 4, start_z + 2.0f);
+        a.writef(c, rec + 8, -y);
+        a.write32(c, rec + 0x30, hint0);
+        a.write32(c, rec + 0x34, hint1);
+        const std::uint32_t args[2] = {roadobj, rec};
+        std::uint32_t v0 = 0;
+        if (a.call_guest(c, fn, args, 2, &v0) != 0) return false;
+        if (g_qlog) {
+            char line[200];
+            std::snprintf(line, sizeof line, "AHEADQ x=%.2f y=%.2f z0=%.2f hint_in=%08x,%08x v0=%u surf=%08x ground=%.3f hint_out=%08x,%08x", x, y, start_z, hint0, hint1, v0,
+                          a.read32(c, rec + 0x2C), a.readf(c, rec + 0x0C), a.read32(c, rec + 0x30), a.read32(c, rec + 0x34));
+            a.log(g_self, line);
+        }
+        if (v0 != 0) { hint0 = a.read32(c, rec + 0x30); hint1 = a.read32(c, rec + 0x34); }
+        if (out != nullptr) {
+            out->asphalt = v0 != 0 && a.read32(c, rec + 0x2C) == 0;
+            out->ground = a.readf(c, rec + 0x0C);
+        }
+        return true;
+    };
+    for (const auto &cand : pending) {
+        ++g_ahead_checked;
+        const reset::Pose &p = cand.pose;
+        start_z = p.v[2];
+        hint0 = cand.hint0;
+        hint1 = cand.hint1;
+        const bool ok = g_sabotage == 5 || (can_query && reset::ahead_on_asphalt(query, p.v[0], p.v[1], p.v[2], p.v[14], g_ahead_m));
+        if (ok) g_resetter->accept(cand);
+        else ++g_ahead_rejected;
+        if (g_log) {
+            char line[200];
+            std::snprintf(line, sizeof line, "AHEAD step=%lld pos=%.2f,%.2f yaw=%.3f ok=%d checked=%u rejected=%u", static_cast<long long>(cand.step), p.v[0], p.v[1], p.v[14], ok ? 1 : 0, g_ahead_checked, g_ahead_rejected);
+            a.log(g_self, line);
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version != GT_MOD_API_VERSION) return 1;
+    if (api == nullptr || api->version != GT_MOD_API_VERSION_2) return 1;
     g_api = api;
     g_self = self;
     reset::Settings settings = reset::parse_settings([&](const char *k) { return api->config(self, k); },
                                                      [&](const std::string &w) { api->log(self, w.c_str()); });
     g_sabotage = settings.sabotage;
+    g_ahead_m = settings.ahead_m;
     g_resetter = std::make_unique<reset::Resetter>(settings);
     g_gate = std::make_unique<reset::SelectGate>(reset::steps_for_ms(settings.hold_ms));
     const char *keys = api->config(self, "reset_keys");
     reset::configure_keys(keys != nullptr ? keys : "R");
     g_fake = reset::parse_fake(std::getenv("GT_MOD_RESET_FAKE"));
     const char *log = std::getenv("GT_MOD_RESET_LOG");
+    g_qlog = std::getenv("GT_MOD_RESET_QLOG") != nullptr;
     g_log = log != nullptr && *log != '\0' && std::string(log) != "0";
+    g_resetter->set_deferred(true);
+    if (api->on_vblank(self, on_tick) != 0) return 1;
     if (api->hook(self, kStep, on_step) != 0) return 1;
     return api->hook(self, kPadRead, on_pad_read) != 0 ? 1 : 0;
 }

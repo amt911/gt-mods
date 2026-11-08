@@ -1,8 +1,8 @@
 id = "reset-to-track"
 name = "Reset to track"
-version = "0.1.0"
+version = "0.2.0"
 library = "libreset_to_track.so"
-api = 1
+api = 2
 enabled = false
 
 [settings]
@@ -10,3 +10,6 @@ hold_ms = 500
 cooldown_ms = 1000
 rewind_ms = 2500
 reset_keys = "R"
+# a ring pose must have this many metres of straight asphalt ahead (along its heading, 1.5 m to each side too) to be restored: a pose that
+# points off the road would put the car out of bounds again
+ahead_m = 40
