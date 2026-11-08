@@ -19,8 +19,8 @@ Euler angles), where `base` is what it left after the previous call. Explicit Eu
 velocities change `f` times as slowly as well (a plain velocity multiplier would brake the car instead). `f` = 0.5 / 0.25 for slow motion, 0 for an AI
 car while AI is frozen (it keeps its speed and goes on from it when you turn the cheat off). With `f = 1` nothing is written: the mod on and idle gives
 frames byte-identical to no mod (the in-game check proves it). The Euler angles go the short way round their +-pi wrap, the basis rows are
-re-orthonormalised, a car that moved more than 8 m between two calls (reset-to-track, a respawn) is left alone, and the bases restart after half a
-second without a call.
+re-orthonormalised, a car that moved more than 8 m between two calls (reset-to-track, a respawn) is left alone, and the bases restart after 8 vblanks
+without a call (the game's own count, `vblank_index`).
 
 Why not skip whole steps (every other world step does not run): the game steps at ~30 Hz, so 0.25x would draw 7 steps per second. Why not scale a
 time step: the world step takes no dt (its caller passes one, `0x0894DD9C` ignores it: fixed step).
@@ -30,7 +30,8 @@ time step: the world step takes no dt (its caller passes one, `0x0894DD9C` ignor
 - **Not slowed:** the game's clocks (race timer, lap counter, countdown), the AI drivers' own state (a frozen AI car's driver keeps running against a car
   that does not move), tyre and engine state outside the body (wheel spin, rpm), sound and camera. Collisions during slow motion resolve over more steps.
 - The picture drawn between two calls shows each car one full step ahead of the mod's base: a constant lead, so the motion on screen is `f` times as fast.
-- Not tested: Time Trial ghosts, two human players (the mod then does nothing), replays (ignored on purpose).
+- A Time Trial ghost may be treated like an AI car (slowed or frozen); untested, as are
+   two human players (the mod then does nothing), replays (ignored on purpose).
 
 ## Settings (`mod.toml`)
 

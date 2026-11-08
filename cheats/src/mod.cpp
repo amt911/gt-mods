@@ -13,7 +13,7 @@
 // goes on from it when the cheat is turned off). Nothing is written when f = 1 (frames are byte-identical to no mod). The picture
 // drawn between two calls shows the car one full step ahead of `base`, a constant lead, so the motion on screen is f times as fast.
 // It acts only while exactly one live human car exists (a race, never a replay, never two humans), never on a car that moved more
-// than 8 m since the last call (a respawn, reset-to-track), restarts its bases after half a second without a call (the mod was off
+// than 8 m since the last call (a respawn, reset-to-track), restarts its bases after 8 vblanks without a call (the game's own count, not the wall clock) (the mod was off
 // in F9) and leaves a slot whose pointers are unreadable alone.
 //
 // What is NOT slowed (the step hook cannot reach it): the game's clocks and the AI drivers' own state (timers, lap counters and the
@@ -30,7 +30,6 @@
 #include "cheats_logic.hpp"
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -71,8 +70,8 @@ struct Base {
     cheats::Kin kin;
 };
 Base g_base[kMaxCars];
-std::chrono::steady_clock::time_point g_last_call;
-constexpr double kWallGapSeconds = 0.5;
+std::uint64_t g_last_vblank = 0;     // the game's vblank count at the previous call (GtModApi::vblank_index)
+constexpr std::uint64_t kVblankGap = 8;  // calls come every ~2 vblanks; a longer gap means the mod was switched off (or a long pause)
 
 Role classify(GtModCtx *c, std::uint32_t controller_list, int index) {
     const GtModApi &a = *g_api;
@@ -165,10 +164,10 @@ void on_step(GtModCtx *c) {
         g_steps = 0;
         for (Base &b : g_base) b.valid = false;
     }
-    const auto wall = std::chrono::steady_clock::now();
-    if (g_last_call.time_since_epoch().count() != 0 && std::chrono::duration<double>(wall - g_last_call).count() > kWallGapSeconds)
+    const std::uint64_t vblank = g_api->vblank_index(g_self);
+    if (g_last_vblank != 0 && vblank - g_last_vblank > kVblankGap)
         for (Base &b : g_base) b.valid = false;  // switched off in F9 for a while, or a long pause: the old bases are stale
-    g_last_call = wall;
+    g_last_vblank = vblank;
     ++g_steps;
     const auto slow = static_cast<cheats::SlowMo>(g_slow.load());
     const bool freeze = g_freeze.load();
@@ -195,6 +194,22 @@ void on_step(GtModCtx *c) {
         for (Base &b : g_base) b.valid = false;
     }
     g_api->call_original(c);
+}
+
+// The vblank tick exercises call_guest with a harmless read-only native: 0x0894CCB8, the 3-instruction reader of the dormant rollover flag word
+// 0x08CF2F08 (host repo FACTS "Rollovers": nothing in the binary writes it, so it answers 0 unless the rollover mod's hook says otherwise). The log line
+// `CALLGUEST status=<call_guest result> v0=<its v0>` (status 0, v0 0 expected) is what tools/mod_cheats_check.sh judges: call_guest works from the tick
+// in a running game, through the same dispatcher as the game's own calls. Nothing else in the mod needs the tick.
+constexpr std::uint32_t kFlagReader = 0x0894CCB8;
+unsigned g_ticks = 0;
+bool g_callguest = false;  // GT_MOD_CHEATS_CALLGUEST=1: verification only: the check's exercise of call_guest from the tick
+void on_tick(GtModCtx *c) {
+    if (!g_callguest || ++g_ticks % 300 != 30) return;
+    std::uint32_t v0 = 0xFFFFFFFFu;
+    const int status = g_api->call_guest(c, kFlagReader, nullptr, 0, &v0);
+    char line[80];
+    std::snprintf(line, sizeof line, "CALLGUEST status=%d v0=%u", status, v0);
+    g_api->log(g_self, line);
 }
 
 void slow_label(GtMod *, char *out, std::uint32_t capacity) {
@@ -226,11 +241,13 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *e = std::getenv("GT_MOD_CHEATS_SLOWMO")) cheats::parse_slowmo(e, g_settings.slow);
     if (const char *e = std::getenv("GT_MOD_CHEATS_FREEZE_AI")) g_settings.freeze_ai = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_FROM")) g_settings.from_step = std::atol(e);
+    if (const char *e = std::getenv("GT_MOD_CHEATS_CALLGUEST")) g_callguest = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG")) g_log = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG_EVERY"); e != nullptr && std::atoi(e) > 0) g_log_every = static_cast<unsigned>(std::atoi(e));
     g_slow.store(static_cast<int>(g_settings.slow));
     g_freeze.store(g_settings.freeze_ai);
     if (api->add_menu_row(self, "slow_motion", slow_label, slow_activate) != 0) return 1;
     if (api->add_menu_row(self, "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
+    if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
 }

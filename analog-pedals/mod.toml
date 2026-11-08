@@ -2,7 +2,7 @@ id = "analog-pedals"
 name = "Analog pedals"
 version = "0.1.0"
 library = "libanalog_pedals.so"
-api = 1
+api = 2
 enabled = false
 
 [settings]
