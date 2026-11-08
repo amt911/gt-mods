@@ -20,7 +20,7 @@ struct Settings {
     float threshold = 3.0f;  // m/s of lateral velocity change in one step
     float gain = 2.5f;       // rad/s of roll rate per m/s above the threshold
     float cap = 12.0f;       // rad/s, largest roll rate requested
-    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving)
+    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.

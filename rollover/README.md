@@ -7,12 +7,16 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
 ## What it does
 
 1. **The clamp.** `0x0893E0FC` limits the tilt angles (`K+0x6FC`, `K+0x700`) unless the word at `0x08CF2F08` is non-zero; `0x0894CCB8` reads
-   that word (its setter has no caller in the binary). The mod hooks that reader and returns 1 while it is active; nothing is written to the
-   game, and when the mod is switched off the host stops calling the hook, so the game reads its real word (0) again.
-2. **The flip state machine stays asleep.** With the flag set, `0x08956930` also wakes a dormant "overturned car" mode that skips the car's
-   force pipeline while it lies on its side: the car then sinks through the road and is pushed back up ~6 m (measured, see the host repo's
-   `docs/FACTS.md`, "Rollovers"). The reader hook answers 0 to that one caller (by `ra` in `--decomp off`, and by a hook on `0x08956930` itself,
-   which works in `--decomp off` and `on`), so the normal pipeline keeps the car on the road through the roll.
+   that word (its setter has no caller in the binary). The mod hooks that reader; nothing is written to the game, and when the mod is
+   switched off the host stops calling the hook, so the game reads its real word (0) again.
+2. **The flag is lifted only where the roll needs it.** The reader has six callers, all `jal`. The mod returns 1 only to the readers inside
+   the body-motion step `0x08956DC8` that the roll needs (the tilt clamp and the Euler angle wrap) and the real word (0) to the others: the
+   contact-normal reset `0x08956EF4`, `0x08945F6C` (inside that step, but lifting it changes frames under `--decomp on`), the step's ground clamp
+   and, above all, `0x08956930`. With the flag set that
+   one wakes a dormant "overturned car" state machine that skips the car's force pipeline while it lies on its side: the car sinks through
+   the road and is pushed back up ~6 m (measured, host repo `docs/FACTS.md`, "Rollovers"). A first version lifted the flag for every reader and
+   changed a few pixels of a car settling on the grid; with the narrowed flag a run with the mod on and no hit is frame-identical to a run
+   without it (the in-game check proves it, `--decomp off` and `on`).
 3. **The impulse.** A pre-step hook on `0x0894DD9C` (the player car only, never a replay) compares the car's world velocity with the previous step. A change along
    the car's lateral axis (`K+0x28` row) above `threshold` in ONE step is a hard side impact: the car is made to roll toward the side it hit
    (`K+0x6F4`, the roll rate) at `gain` x (change - threshold) rad/s, at most `cap`, held for 40 steps with a linear decay (a one-step kick
@@ -35,7 +39,10 @@ it drives on.
 ## Known limits
 
 - There is no roof collision in the game: a rolling car keeps its wheels' contact model and always recovers; it does not stay on its roof.
-- The flag is global: AI cars also lose the clamp (they get no impulses, so nothing changes for them in practice).
+- The clamp is lifted for every car: an AI car that tilts past 35 degrees is no longer held. AI cars get no impulses and none was seen to tilt
+  that far in the runs, but this is not proven for every track.
+- Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, not a replay, with input). With two humans
+  (ad hoc / split screen) nobody gets an impulse while the clamp stays lifted.
 - The roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
 - `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`);
   `GT_MOD_ROLLOVER_LOG=1` logs the car's state (used by `tools/mod_rollover_check.sh`).
