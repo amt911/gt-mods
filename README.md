@@ -31,15 +31,19 @@ Nothing game-derived lives here: only hand-written mod code.
 - `orbit-camera` - Gran Turismo 7 style orbit camera on the right stick. The stick's direction picks the look direction around the
   player's car (right = +90 deg, left = -90 deg, forward = 0); pulled back (past `back_threshold`) or clicked (R3) = rear view
   (180 deg). The camera swings around the car in chase views and looks around from the seat in bumper/cockpit views (the pivot is
-  the car, which there is ~at the eye). Like GT7, in every view except the far (full third-person) chase view the stick turns the
-  other way (`invert_outside_chase`, default true; the far chase view is told by the car's distance from the eye, > 6.5); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
+  the car, which there is ~at the eye). The stick turns the other way in every view: `invert_outside_chase` (bumper, cockpit, near
+  chase; default true, like GT7) and `invert_in_chase` (the far, full third-person chase view; default true; told by the car's
+  distance from the eye, > 6.5); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
   `smooth_ms` time constant (80) and back to 0 on release; dead zone `deadzone` (0.25). Keyboard: `look_left_keys` /
   `look_right_keys` / `look_back_keys` (SDL key names, defaults `J` / `L` / `K`, free in gt_play's default bindings). Only while
   driving (live player car, not a replay, not a menu); with no input it writes nothing. Disabled by default; toggles live from the
   F9 menu. `GT_MOD_CAMERA_FAKE=<yaw>[,<pitch>]` fixes the angle (used by the in-game check, `tools/mod_camera_check.sh`);
   `GT_MOD_CAMERA_LOG=1` logs yaw, scene and pivot once a second. Pulling the stick back blends the angle smoothly into the rear
   view (full 180 only at full back). The orbit is live while physics steps keep arriving (a gap of 10 frames, counted by the HUD's
-  uploads, ends it). Known limits: in bumper/cockpit views the pivot is the car, which is not exactly at the eye (the camera
+  uploads, ends it). The orbit is applied to the camera's view when the scene renderer loads it for each layer (0x08AF1524 ->
+  0x08B568DC), so the sky dome and far layers are placed and culled for the orbited heading (rotating only the objects' world
+  matrices left the sky undrawn behind the car, and the game never clears the colour buffer in a race: earlier frames showed
+  through as a hall-of-mirrors ghost); the rear-view mirror's camera is left alone. Known limits: in bumper/cockpit views the pivot is the car, which is not exactly at the eye (the camera
   swings slightly instead of turning in place); the mod opens its own SDL controller handle next to the host's; the look keys
   (J/K/L) also act while the F9 mod menu is open (the SDK cannot tell whether the menu is open).
 - `reset-to-track` - one button puts the player's car back on the road, upright and facing the way it was going, like "recover car" in

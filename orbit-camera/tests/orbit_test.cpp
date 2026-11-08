@@ -141,6 +141,19 @@ static void invert_outside_chase_setting() {
     assert(parse_settings(get, warn).invert_outside_chase && warned.find("invert_outside_chase") != std::string::npos);
 }
 
+static void invert_in_chase_setting() {
+    std::map<std::string, std::string> kv;
+    std::string warned;
+    auto get = [&](const char *k) -> const char * { auto it = kv.find(k); return it == kv.end() ? nullptr : it->second.c_str(); };
+    auto warn = [&](const std::string &m) { warned += m; };
+    assert(parse_settings(get, warn).invert_in_chase);  // default: on
+    kv["invert_in_chase"] = "false";
+    assert(!parse_settings(get, warn).invert_in_chase && warned.empty());
+    kv["invert_in_chase"] = "1";
+    assert(parse_settings(get, warn).invert_in_chase && warned.empty());
+    kv["invert_in_chase"] = "maybe";
+    assert(parse_settings(get, warn).invert_in_chase && warned.find("invert_in_chase") != std::string::npos);
+}
 static void full_chase_view_by_camera_distance() {
     // measured (chase route, docs/FACTS of the host repo): far chase ~(0, -1.60, -9.01), near chase ~(0, -1.69, -3.82),
     // cockpit ~(0.3, -1.02, -0.63), bumper ~(0, -0.94, -0.38), race intro ~(0, -0.2, -4.5)
@@ -156,9 +169,14 @@ static void full_chase_view_by_camera_distance() {
     assert(is_full_chase_view(d71, false) && !is_full_chase_view(d59, true));
 }
 
-static void view_yaw_inverts_only_outside_chase() {
+static void view_yaw_inverts_in_every_view_by_default() {
     Settings s;
-    assert(view_yaw(90.0f, true, s) == 90.0f);     // chase view: as the stick says
+    assert(view_yaw(90.0f, true, s) == -90.0f);    // far chase: mirrored too (user, 2026-11-08: "invert the third person too")
+    assert(view_yaw(0.0f, true, s) == 0.0f);
+    s.invert_in_chase = false;
+    assert(view_yaw(90.0f, true, s) == 90.0f);     // opt-out: far chase as the stick says
+    assert(view_yaw(90.0f, false, s) == -90.0f);   // the seat views keep their own setting
+    s = Settings{};
     assert(view_yaw(90.0f, false, s) == -90.0f);   // bumper/cockpit/hood: mirrored, stick right looks the other way round
     assert(view_yaw(-35.0f, false, s) == 35.0f);
     assert(view_yaw(0.0f, false, s) == 0.0f);      // no look stays the identity (the mod writes nothing)
@@ -291,7 +309,8 @@ int main() {
     car_position_to_y_up();
     settings_defaults_and_invalid();
     invert_outside_chase_setting();
-    view_yaw_inverts_only_outside_chase();
+    view_yaw_inverts_in_every_view_by_default();
+    invert_in_chase_setting();
     full_chase_view_by_camera_distance();
     stick_dead_zone_gives_no_look();
     stick_direction_picks_the_angle();
