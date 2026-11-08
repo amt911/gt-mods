@@ -82,6 +82,56 @@ Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `liba
 `enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
 gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh` / `tools/mod_rollover_check.sh`.
 
+## Releases
+
+A release is a git tag; CI (`.github/workflows/release.yml`) builds every mod against the pinned `gran-turismo-decomp`
+`include/` (commit SHA in the workflow's `SDK_REF`), runs the tool tests, packs the archives and uploads them with `index.json`:
+
+```bash
+git tag vYYYY.MM.DD        # a second release the same day: vYYYY.MM.DD.1
+git push origin vYYYY.MM.DD
+```
+
+Run the workflow by hand (Actions -> release -> Run workflow) for a dry run: it builds and packs but uploads nothing
+(the files stay as the `release-dry-run` workflow artifact). Bump `version` in a mod's `mod.toml` (`x.y.z`) when the mod changes;
+the index lists whatever the tagged commit says.
+
+Locally, the same files (needs a build in `build/`):
+
+```bash
+python3 tools/make_index.py --build-dir build --platform linux-x86_64 \
+    --base-url https://github.com/amt911/gt-mods/releases/download/vYYYY.MM.DD --out-dir dist
+python3 -m pytest tests --cov=tools --cov-fail-under=80
+```
+
+The output is deterministic (sorted tar entries, fixed mtime/uid/gid, gzip mtime 0): the same inputs give byte-identical files.
+Each mod becomes `<id>-<version>-<platform>.tar.gz` holding a folder `<id>/` with `mod.toml` and the library; unpack it into the
+game's mods directory. One-line mod descriptions live in `tools/descriptions.toml` (the host's `mod.toml` reader rejects unknown keys).
+
+### `index.json`
+
+```json
+{
+  "schema": 1,
+  "mods": [
+    {
+      "id": "analog-pedals",
+      "name": "Analog pedals",
+      "version": "0.1.0",
+      "api": 2,
+      "description": "Analog triggers and keyboard keys mapped to throttle and brake (0..1).",
+      "platforms": {
+        "linux-x86_64": {
+          "url": "https://github.com/amt911/gt-mods/releases/download/v2026.11.08/analog-pedals-0.1.0-linux-x86_64.tar.gz",
+          "sha256": "<hex sha256 of the archive>",
+          "size": 29508
+        }
+      }
+    }
+  ]
+}
+```
+
 ## Licence
 
 MIT, see `LICENSE`.
