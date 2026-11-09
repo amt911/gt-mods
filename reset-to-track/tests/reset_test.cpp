@@ -13,6 +13,7 @@ static CarSample good_sample() { return CarSample{4, 1.0f, 20.0f, false}; }
 static Pose pose_at(float x) {
     Pose p;
     p.v[0] = x;
+    p.v[14] = -1.5707963f;  // heading +x (forward = (-sin yaw, cos yaw)): the tests drive along x
     return p;
 }
 static Settings steps_settings() {  // 1 step = 1000/60 ms; round numbers in steps
@@ -31,7 +32,7 @@ static Settings parse(const std::map<std::string, std::string> &m, std::vector<s
 static void settings_defaults_and_invalid() {
     std::vector<std::string> w;
     Settings d = parse({}, &w);
-    assert(w.empty() && d.hold_ms == 500.0f && d.cooldown_ms == 1000.0f && d.rewind_ms == 2500.0f && d.sabotage == 0);
+    assert(w.empty() && d.hold_ms == 500.0f && d.cooldown_ms == 1000.0f && d.rewind_ms == 2500.0f && d.ahead_m == 40.0f && d.sabotage == 0);
     Settings s = parse({{"hold_ms", "250"}, {"cooldown_ms", "2000"}, {"rewind_ms", "3000"}}, &w);
     assert(w.empty() && s.hold_ms == 250.0f && s.cooldown_ms == 2000.0f && s.rewind_ms == 3000.0f);
     w.clear();
@@ -163,14 +164,16 @@ static void cooldown_blocks_a_second_reset_then_allows_it() {
     std::optional<Pose> out;
     drive(rs, 200, 0.0f, false, &out);
     int fired = 0;
-    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(200.0f), true).has_value();
+    float x = 200.0f;  // the car drives on along x (a stationary car would have no path after any pose); the restore is not "honoured" by the test, so no jump check applies
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(x++), true)) { ++fired; out = r; }
     assert(fired == 1);
+    x = out->v[0];  // the car is where it was put
+    rs.step(good_sample(), pose_at(x), false);
     // release, press again at once: the hold completes inside the cooldown -> nothing
-    rs.step(good_sample(), pose_at(200.0f), false);
-    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(200.0f), true).has_value();
+    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), true).has_value();
     assert(fired == 1);
-    for (int i = 0; i < 30; ++i) rs.step(good_sample(), pose_at(200.0f), false);
-    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(200.0f), true).has_value();
+    for (int i = 0; i < 30; ++i) rs.step(good_sample(), pose_at(++x), false);
+    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), true).has_value();
     assert(fired == 2);
 }
 static void a_reset_keeps_the_restored_pose_as_the_only_one() {
@@ -315,6 +318,98 @@ static void gate_zero_hold_is_always_long() {
     assert(!g.visible(false, true, 1));
 }
 
+// --- straight-ahead rule (pick_clear) ---------------------------------------------------------------------------------------------
+// Poses every 15 steps along a path, heading given per pose (yaw; forward = (-sin yaw, cos yaw)).
+static Pose pose_xy(float x, float y, float yaw) {
+    Pose p;
+    p.v[0] = x; p.v[1] = y; p.v[14] = yaw;
+    return p;
+}
+static void straight_path_prefers_the_newest_pose_with_a_long_enough_run() {
+    PoseRing r(24);
+    for (int i = 0; i < 20; ++i) r.push(15 * i, pose_xy(0.0f, 5.0f * i, 0.0f));  // heading +y, 5 m between poses
+    assert(std::fabs(r.run_after(0, 2.5f) - 95.0f) < 1e-3f && std::fabs(r.run_after(15, 2.5f) - 20.0f) < 1e-3f);
+    float run = 0;
+    const Pose *p = r.pick_clear(300, 60, 480, 40.0f, 15.0f, 2.5f, &run);  // age >= 60 -> index <= 16; the newest with 40 m after it: index 11 (y = 55, run 40)
+    assert(p && p->v[1] == 55.0f && run >= 40.0f);
+}
+static void a_pose_pointing_at_the_edge_is_rejected() {
+    PoseRing r(24);
+    // the car drives straight +y but the pose at index 10 is rotated 31 deg toward +x: its straight line leaves the driven path
+    for (int i = 0; i < 20; ++i) r.push(15 * i, pose_xy(0.0f, 5.0f * i, i == 10 ? -0.54f : 0.0f));
+    assert(r.run_after(10, 2.5f) < 6.0f);  // the path is 2.5 m off the line after ~5 m
+    float run = 0;
+    const Pose *p = r.pick_clear(300, 60, 480, 40.0f, 15.0f, 2.5f, &run);
+    assert(p && p->v[14] == 0.0f);  // never the diverging pose
+    // only the diverging pose is old enough: nothing is restored
+    PoseRing q(24);
+    q.push(0, pose_xy(0.0f, 0.0f, -0.54f));
+    for (int i = 1; i < 6; ++i) q.push(15 * i, pose_xy(0.0f, 5.0f * i, 0.0f));
+    assert(q.pick_clear(100, 90, 480, 40.0f, 15.0f, 2.5f) == nullptr);
+}
+static void a_curve_falls_back_to_the_longest_run_of_at_least_15_m() {
+    PoseRing r(24);
+    // a curve: heading turns 0.06 rad per pose; a pose's straight line is followed for ~20 m, then the path bends away
+    float x = 0, y = 0, yaw = 0;
+    for (int i = 0; i < 20; ++i) {
+        r.push(15 * i, pose_xy(x, y, yaw));
+        x += -std::sin(yaw) * 5.0f; y += std::cos(yaw) * 5.0f; yaw += 0.06f;
+    }
+    float run = 0;
+    const Pose *p = r.pick_clear(300, 60, 480, 40.0f, 15.0f, 2.5f, &run);
+    assert(p && run >= 15.0f && run < 40.0f);  // no pose has 40 m: the one with the longest run (>= 15 m)
+    assert(r.pick_clear(300, 60, 480, 40.0f, 40.0f, 2.5f) == nullptr);  // with a 40 m floor nothing qualifies: nothing is restored
+}
+static void a_gap_in_the_ring_ends_the_run() {
+    PoseRing r(24);
+    for (int i = 0; i < 6; ++i) r.push(15 * i, pose_xy(0.0f, 5.0f * i, 0.0f));
+    r.push(15 * 12, pose_xy(0.0f, 60.0f, 0.0f));  // the car was not in a good state for 5 samples (off asphalt, spinning): not a continuous path
+    assert(std::fabs(r.run_after(0, 2.5f) - 25.0f) < 1e-3f);
+}
+static void a_restored_pose_is_pinned_and_the_rule_off_sabotage_takes_the_old_pick() {
+    Settings s = steps_settings();
+    Resetter rs(s);
+    std::optional<Pose> out;
+    drive(rs, 200, 0.0f, false, &out);
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f + i), true)) out = r;
+    assert(out && !rs.refused());
+    // a diverging pose among straight ones: the rule skips it, the sabotage (5) restores it
+    for (int sabotage : {0, 5}) {
+        Settings t = steps_settings();
+        t.sabotage = sabotage;
+        Resetter q(t);
+        std::optional<Pose> got;
+        for (int i = 0; i < 200; ++i) {
+            Pose p = pose_at(float(i));
+            if (i >= 134 && i < 150) p.v[14] = 0.0f;  // the pose recorded at step 135 points along +y while the car drives +x
+            if (auto r = q.step(good_sample(), p, false)) got = r;
+        }
+        for (int i = 0; i < 10; ++i) if (auto r = q.step(good_sample(), pose_at(200.0f + i), true)) got = r;
+        assert(got);
+        if (sabotage == 0) assert(got->v[14] != 0.0f);
+        else assert(got->v[14] == 0.0f);  // 200 - 60 steps -> the pose of step 135, newest one old enough
+    }
+}
+static void a_press_with_nothing_eligible_is_refused_and_says_so() {
+    Resetter rs(steps_settings());
+    std::optional<Pose> out;
+    bool refused = false;
+    for (int i = 0; i < 100; ++i) rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), false);  // a car standing still: no path after any pose
+    for (int i = 0; i < 12; ++i) {
+        if (auto r = rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), true)) out = r;
+        refused = refused || rs.refused();
+    }
+    assert(!out && refused);
+    rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), false);
+    assert(!rs.refused());  // only the call with the press says so
+}
+static void ahead_setting() {
+    std::vector<std::string> w;
+    assert(parse({{"ahead_m", "25"}}, &w).ahead_m == 25.0f && w.empty());
+    assert(parse({{"ahead_m", "2"}}, &w).ahead_m == 40.0f && w.size() == 1);
+    assert(parse({{"ahead_m", "500"}}, &w).ahead_m == 40.0f && w.size() == 2);
+}
+
 int main() {
     good_pose_needs_a_calm_forward_car();
     old_poses_are_never_restored();
@@ -343,6 +438,13 @@ int main() {
     a_reset_keeps_the_restored_pose_as_the_only_one();
     losing_the_car_clears_everything();
     sabotage_newest_records_everything_and_restores_the_latest();
+    straight_path_prefers_the_newest_pose_with_a_long_enough_run();
+    a_pose_pointing_at_the_edge_is_rejected();
+    a_curve_falls_back_to_the_longest_run_of_at_least_15_m();
+    a_gap_in_the_ring_ends_the_run();
+    a_restored_pose_is_pinned_and_the_rule_off_sabotage_takes_the_old_pick();
+    a_press_with_nothing_eligible_is_refused_and_says_so();
+    ahead_setting();
     fake_parsing();
     fake_held_window();
     std::puts("reset_test: all passed");

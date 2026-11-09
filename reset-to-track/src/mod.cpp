@@ -11,6 +11,12 @@
 // the car's velocity, speed and rates are zeroed (it restarts from rest), then the original step runs. With no button the hook only
 // reads. A mod switched off in the F9 menu never reaches this code (the host passes the hook straight to the original).
 //
+// Straight-ahead rule (0.2.0): the car restarts from rest along the pose's heading, and a pose that points off the road (a diagonal crossing, a
+// slide: 4/4 asphalt, upright, calm, aligned with its velocity, but heading at the edge) put it out of bounds again. The ring is searched for the
+// newest old-enough pose whose straight line along its heading (and one car width to each side) is followed by the car's OWN path for `ahead_m`
+// (every pose in the ring has 4/4 wheels on asphalt, so where the car drove is asphalt); with none, the pose with the longest such run, at least
+// 15 m (hairpins); with none, nothing is restored (log line NOPOSE). No road query and no API v2: the game is never called.
+//
 // Button: pad Select held, or a keyboard key (`reset_keys`, default R). Select is read from the pad buffer the game itself reads: the
 // import stub of sceCtrlReadBufferPositive (0x08C7ABF0, a0 = buffer, a1 = count, v0 = samples read; sample +4 = buttons, bit 0 =
 // Select) is hooked, so the route's GT_PAD Select and the host's controller mapping both count. While racing a held Select is hidden
@@ -166,7 +172,7 @@ void on_pad_read(GtModCtx *c) {
     }
 }
 
-void on_step(GtModCtx *c) {
+void step_body(GtModCtx *c, bool *called) {
     const GtModApi &a = *g_api;
     g_reads_since_step = 0;
     const auto now = std::chrono::steady_clock::now();
@@ -181,6 +187,7 @@ void on_step(GtModCtx *c) {
         g_car_steps = 0;
         g_steps_atomic = 0;
         g_since_restore = 0;
+        *called = true;
         a.call_original(c);
         return;
     }
@@ -199,16 +206,38 @@ void on_step(GtModCtx *c) {
         ++g_restores;
         if (g_log) {
             char line[200];
-            std::snprintf(line, sizeof line, "RESTORE step=%u pos=%.2f,%.2f,%.2f yaw=%.3f", g_car_steps, pose->v[0], pose->v[1], pose->v[2], pose->v[14]);
+            std::snprintf(line, sizeof line, "RESTORE step=%u pos=%.2f,%.2f,%.2f yaw=%.3f run=%.1f", g_car_steps, pose->v[0], pose->v[1], pose->v[2], pose->v[14], static_cast<double>(g_resetter->last_run()));
             a.log(g_self, line);
         }
     }
+    if (g_resetter->refused()) {  // the button was pressed and no pose is eligible (none yet, or none with a straight run of at least 15 m)
+        char line[140];
+        std::snprintf(line, sizeof line, "NOPOSE step=%u: no pose with %.0f m of straight path in the ring (%zu poses), nothing restored", g_car_steps, static_cast<double>(reset::kMinAheadMeters), g_resetter->recorded());
+        a.log(g_self, line);
+    }
     if (pose) g_since_restore = 1;  // t = 0 at the restore step
     else if (g_since_restore != 0) ++g_since_restore;
+    *called = true;
     a.call_original(c);
     if (g_log) {
         const bool window = g_since_restore != 0 && g_since_restore <= kLogWindow;
         if ((window && g_since_restore % 5 == 1) || (!window && g_car_steps % 30 == 0)) log_state(c, car, body);
+    }
+}
+
+// A read outside PSP RAM throws (psprecomp::Error: a stale car pointer once a race is over); an exception out of a hook would abort the game, so it
+// counts as "no player car" and the original step still runs exactly once.
+void on_step(GtModCtx *c) {
+    bool called = false;
+    try {
+        step_body(c, &called);
+    } catch (...) {
+        g_resetter->lose_car();
+        g_car = 0;
+        g_car_steps = 0;
+        g_steps_atomic = 0;
+        g_since_restore = 0;
+        if (!called) g_api->call_original(c);
     }
 }
 

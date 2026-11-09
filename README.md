@@ -47,7 +47,10 @@ Nothing game-derived lives here: only hand-written mod code.
 - `reset-to-track` - one button puts the player's car back on the road, upright and facing the way it was going, like "recover car" in
   modern racing games. Button: pad Select held 0.5 s (`hold_ms`), or the keyboard key `reset_keys` (default `R`). While driving it keeps a
   ring of "good" poses (all four wheels on asphalt, up vector z > 0.9, faster than 5 m/s, yaw rate <= 0.6 rad/s, velocity within ~25 deg of
-  the heading; one every 15 steps); the reset restores the newest pose at least `rewind_ms` (2500) old, zeroes velocity, speed and all
+  the heading; one every 15 steps). **Straight-ahead rule (0.2.0):** the car restarts from rest along the pose's heading, and a pose that points off the road (a diagonal crossing, a slide: 4/4 asphalt,
+  upright, calm, aligned with its velocity, but heading at the edge) used to put it out of bounds again (3 of 4 restores in the reproduction). The ring is searched for the newest old-enough pose whose straight line
+  (along its heading, 2.5 m lateral tolerance) is followed by the car's OWN path for `ahead_m` (40 m); every ring pose has 4/4 wheels on asphalt, so the driven path is asphalt. With none, the pose with the longest such run of at
+  least 15 m (hairpins); with none, nothing is restored (log line `NOPOSE`). The game is never called (API 1). The reset restores that pose (by default the newest at least `rewind_ms` (2500) old), zeroes velocity, speed and all
   rotation rates (the car restarts from rest) and ignores further presses for `cooldown_ms` (1000). Nothing happens when no good pose
   exists yet. The ring is emptied when the car jumps more than 15 m in a step (a respawn, a new attempt), after 2 s without steps (the mod
   was switched off in F9, a long pause) and on a new car; poses older than 8 s are never restored. Allowed everywhere (Time Trial
