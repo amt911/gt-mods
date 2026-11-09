@@ -2,7 +2,7 @@
 
 > Versión en español. Proyecto principal: [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp) · mapa de progreso en línea: <https://claude.ai/artifact/V93Bh8ZWDTAUGfWaoZa5hq>
 
-Mods nativos para la versión de PC de la descompilación de Gran Turismo (PSP),
+Mods nativos para la versión de PC de la decompilación de Gran Turismo (PSP),
 [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp). Cada mod es una biblioteca compartida más un
 manifiesto `mod.toml`, que `gt_play` carga a través del SDK con ABI de C (`include/gt_mod/gt_mod_api.h`).
 
