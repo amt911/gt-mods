@@ -8,7 +8,12 @@
 // is not hooked: the default recompiled build reaches it by an in-unit goto, so a hook there never fires. The game answers the
 // record with its own response (accelerator x^8, then a 10 % floor for both pedals; docs/FACTS.md), so the mod writes the record
 // value whose response is the requested pedal (pedal_input.hpp). A pedal below 0.05 is not injected; 0.05-0.1 gives the game's
-// smallest press (0.1). A replay shows only the button presses it recorded, not these injected values (FINDINGS).
+// smallest press (0.1). Replays: 0x08896780 copies the pad record into its temp record a1 (0x0892B4B0, called at 0x088967D4,
+// 0x08896804 and 0x0889682C) and, while entry+0xA9 is set, records that temp record (0x08895A88 at 0x08896848); so the mod also
+// writes the analog values into the temp record right after that copy, and the replay records them. Without it a replay
+// played only the digital presses and the car stood still. The copy is recognised by its destination (the a1 of the human's
+// 0x08896780 call; the first copy into it after that call's hook, once per fill): not by nesting (the fill hook's
+// call_original does not wrap the body's calls) nor by return address ($ra is not kept by the decompiled 0x08896780).
 // Which car a 0x08948B78 call belongs to is proven by call order, not by assumption. The record is a stack buffer of 0x0894DD9C
 // shared by all cars (sp_entry - 0x50: frame 0x70, record at +0x20, asm 0x0894DE44), so its address says nothing about the car.
 // Per car, mode 0, the step calls controller slot 0xC = 0x08899094, which fetches the driver entry of that car index
@@ -37,6 +42,7 @@ namespace {
 constexpr std::uint32_t kStep = 0x0894DD9C;         // a0 = world
 constexpr std::uint32_t kClampRecord = 0x08948B78;  // a0 = input record
 constexpr std::uint32_t kFillRecord = 0x08896780;   // a0 = driver entry, a1 = temp record, a2 = car index (entry vtable slot 0x64)
+constexpr std::uint32_t kCopyRecord = 0x0892B4B0;   // a0 = dest record, a1 = source record (32 bytes)
 constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
 constexpr std::uint32_t kEntryReplay = 0xA8;
 // The human entry that reads the pad: +0x6C points to the pad input object (the same object, 0x094168D8, in a race and in
@@ -66,6 +72,8 @@ std::uint32_t g_player_car = 0;  // car address of this step's human car, 0 if n
 pedals::PedalInput g_input;
 unsigned g_steps = 0, g_replay_steps = 0;
 std::uint32_t g_player_entry = 0, g_player_index = 0;
+std::uint32_t g_player_fill_buffer = 0;  // a1 of the last 0x08896780 call for the human entry/index (0: none this step)
+bool g_fill_injected = false;            // that call's temp record already got the analog values
 bool g_fill_was_player = false;  // 0x08896780 just ran for the human entry/index and its record has not been clamped yet
 std::uint32_t g_expected_record = 0;  // this step's record address (stack of 0x0894DD9C)
 unsigned g_proven_clamps = 0;           // proven clamps (right after a human fill) injected in this step
@@ -120,6 +128,7 @@ void on_step(GtModCtx *c) {
     g_expected_record = g_api->gpr(c, 29) - kRecordFromEntrySp;
     g_proven_clamps = 0;
     g_fill_was_player = false;
+    g_player_fill_buffer = 0;
     g_ai_car = g_replay_car = 0;
     g_player_car = find_player_car(c, g_api->gpr(c, 4), &g_ai_car, &g_replay_car);
     g_api->call_original(c);
@@ -132,9 +141,10 @@ void on_step(GtModCtx *c) {
     if (g_log_steps && g_replay_car != 0 && (++g_replay_steps % 60) == 0) {
         const std::uint32_t rd = g_api->read32(c, g_replay_car + 8);
         char line[120];
-        std::snprintf(line, sizeof line, "replay step=%u thr=%.4f brk=%.4f eff=%.4f", g_replay_steps,
+        // speed: car+8 +0x6C4, m/s (gran-turismo-decomp docs/FACTS.md, rollover research)
+        std::snprintf(line, sizeof line, "replay step=%u thr=%.4f brk=%.4f eff=%.4f speed=%.2f", g_replay_steps,
                       g_api->readf(c, rd + kPedalThrottle), g_api->readf(c, rd + kPedalBrake),
-                      g_api->readf(c, rd + kEffectiveThrottle));
+                      g_api->readf(c, rd + kEffectiveThrottle), g_api->readf(c, rd + 0x6C4));
         g_api->log(g_self, line);
     }
     if (g_log_steps && g_player_car != 0 && (++g_steps % 60) == 0) {
@@ -168,16 +178,36 @@ void inject(GtModCtx *c, std::uint32_t record, std::uint32_t field, std::uint8_t
     g_api->write16(c, record + field, static_cast<std::uint16_t>(value));
 }
 
+bool menu_open() { return g_api->version >= GT_MOD_API_VERSION_2 && g_api->is_menu_open(g_self) != 0; }
+
+void inject_both(GtModCtx *c, std::uint32_t record) {
+    inject(c, record, kRecordThrottle, kFlagThrottle, pedals::throttle_record_for_pedal(g_input.throttle), g_input.throttle_trigger);
+    inject(c, record, kRecordBrake, kFlagBrake, pedals::brake_record_for_pedal(g_input.brake), g_input.brake_trigger);
+}
+
 void on_fill_record(GtModCtx *c) {
-    if (g_player_car != 0 && g_api->gpr(c, 4) == g_player_entry && g_api->gpr(c, 6) == g_player_index) g_fill_was_player = true;
+    if (g_player_car != 0 && g_api->gpr(c, 4) == g_player_entry && g_api->gpr(c, 6) == g_player_index) {
+        g_fill_was_player = true;
+        g_player_fill_buffer = g_api->gpr(c, 5);
+        g_fill_injected = false;
+    }
     g_api->call_original(c);
+}
+
+// The pad record copied into the human fill's temp record: inject before the replay recorder takes it (once per fill).
+void on_copy_record(GtModCtx *c) {
+    const std::uint32_t dest = g_api->gpr(c, 4);
+    g_api->call_original(c);
+    if (g_player_fill_buffer == 0 || dest != g_player_fill_buffer || g_fill_injected || menu_open()) return;
+    g_fill_injected = true;
+    inject_both(c, dest);
 }
 
 void on_clamp_record(GtModCtx *c) {
     g_api->call_original(c);
     if (g_player_car == 0) return;
     // With the host's F9/F10 overlay open the pad is hidden from the game (host repo, docs/MODS.md): the trigger and the keys must not drive the car either.
-    if (g_api->version >= GT_MOD_API_VERSION_2 && g_api->is_menu_open(g_self) != 0) return;
+    if (menu_open()) return;
     const std::uint32_t record = g_api->gpr(c, 4);
     // Provable player record: the human car's step calls 0x08948B78 once, with the buffer 0x0894DD9C keeps for it.
     const bool proven = g_fill_was_player;
@@ -192,8 +222,7 @@ void on_clamp_record(GtModCtx *c) {
         }
         return;
     }
-    inject(c, record, kRecordThrottle, kFlagThrottle, pedals::throttle_record_for_pedal(g_input.throttle), g_input.throttle_trigger);
-    inject(c, record, kRecordBrake, kFlagBrake, pedals::brake_record_for_pedal(g_input.brake), g_input.brake_trigger);
+    inject_both(c, record);
 }
 
 }  // namespace
@@ -210,5 +239,6 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (api->hook(self, kStep, on_step) != 0) return 1;
     if (api->hook(self, kFillRecord, on_fill_record) != 0) return 1;
     if (api->hook(self, kClampRecord, on_clamp_record) != 0) return 1;
+    if (api->hook(self, kCopyRecord, on_copy_record) != 0) return 1;
     return 0;
 }
