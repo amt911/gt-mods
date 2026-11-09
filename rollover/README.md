@@ -1,53 +1,53 @@
 # rollover
 
-Lets the player's car roll over in Gran Turismo PSP. The stock game cannot: it clamps the car's tilt angles to +-35 degrees and zeroes their
-rates. This mod lifts the clamp and, on a **hard side impact**, gives the car a roll. Disabled by default (`enabled = false`); it toggles
-live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that ended up on its roof back on the road).
+Permite que el coche del jugador vuelque en Gran Turismo PSP. El juego original no puede: limita los ángulos de inclinación del coche a +-35 grados y pone a cero sus
+velocidades. Este mod levanta el límite y, ante un **impacto lateral fuerte**, hace que el coche ruede. Desactivado por defecto (`enabled = false`); se activa y desactiva
+en vivo desde el menú F9. Combina con `reset-to-track` (un botón devuelve a la carretera un coche que ha acabado sobre el techo).
 
-## What it does
+## Qué hace
 
-1. **The clamp.** `0x0893E0FC` limits the tilt angles (`K+0x6FC`, `K+0x700`) unless the word at `0x08CF2F08` is non-zero; `0x0894CCB8` reads
-   that word (its setter has no caller in the binary). The mod hooks that reader; nothing is written to the game, and when the mod is
-   switched off the host stops calling the hook, so the game reads its real word (0) again.
-2. **The flag is lifted only where the roll needs it.** The reader has six callers, all `jal`. The mod returns 1 only to the readers inside
-   the body-motion step `0x08956DC8` that the roll needs (the tilt clamp and the Euler angle wrap) and the real word (0) to the others: the
-   contact-normal reset `0x08956EF4`, `0x08945F6C` (inside that step, but lifting it changes frames under `--decomp on`), the step's ground clamp
-   and, above all, `0x08956930`. With the flag set that
-   one wakes a dormant "overturned car" state machine that skips the car's force pipeline while it lies on its side: the car sinks through
-   the road and is pushed back up ~6 m (measured, host repo `docs/FACTS.md`, "Rollovers"). A first version lifted the flag for every reader and
-   changed a few pixels of a car settling on the grid; with the narrowed flag a run with the mod on and no hit is frame-identical to a run
-   without it (the in-game check proves it, `--decomp off` and `on`).
-3. **The impulse.** A pre-step hook on `0x0894DD9C` (the player car only, never a replay) compares the car's world velocity with the previous step. A change along
-   the car's lateral axis (`K+0x28` row) above `threshold` in ONE step is a hard side impact: the car is made to roll toward the side it hit
-   (`K+0x6F4`, the roll rate) at `gain` x (change - threshold) rad/s, at most `cap`, held for 40 steps with a linear decay (a one-step kick
-   is undone by the springs). Normal driving changes the lateral velocity by ~0.2 m/s per step: nothing happens. A jump of the car (> 3 m in
-   a step: reset-to-track, a respawn) or of its velocity (> 60 m/s) is not an impact and drops what was being held.
+1. **El límite.** `0x0893E0FC` limita los ángulos de inclinación (`K+0x6FC`, `K+0x700`) salvo que la palabra de `0x08CF2F08` sea distinta de cero; `0x0894CCB8` lee
+   esa palabra (su escritor no tiene ningún llamador en el binario). El mod engancha ese lector; no se escribe nada en el juego, y cuando el mod se
+   desactiva el host deja de llamar al hook, así que el juego vuelve a leer su palabra real (0).
+2. **La bandera se levanta solo donde el balanceo la necesita.** El lector tiene seis llamadores, todos `jal`. El mod devuelve 1 solo a los lectores del interior del
+   paso de movimiento del chasis `0x08956DC8` que el balanceo necesita (el límite de inclinación y el ajuste del ángulo de Euler) y la palabra real (0) a los demás: el
+   reinicio de la normal de contacto `0x08956EF4`, `0x08945F6C` (dentro de ese paso, pero levantarla cambia fotogramas con `--decomp on`), el límite contra el suelo del paso
+   y, sobre todo, `0x08956930`. Con la bandera activada, esta última
+   despierta una máquina de estados dormida de "coche volcado" que se salta el pipeline de fuerzas del coche mientras yace de lado: el coche se hunde a través de
+   la carretera y vuelve a salir empujado ~6 m (medido, `docs/FACTS.md` del repositorio del host, "Rollovers"). Una primera versión levantaba la bandera para todos los lectores y
+   cambiaba unos pocos píxeles de un coche asentándose en la parrilla; con la bandera acotada, una ejecución con el mod activado y sin golpes es idéntica fotograma a fotograma a una
+   sin él (la comprobación en el juego lo demuestra, con `--decomp off` y `on`).
+3. **El impulso.** Un hook previo al paso en `0x0894DD9C` (solo el coche del jugador, nunca una repetición) compara la velocidad en el mundo del coche con la del paso anterior. Un cambio a lo largo
+   del eje lateral del coche (fila `K+0x28`) superior a `threshold` en UN solo paso es un impacto lateral fuerte: se hace rodar al coche hacia el lado golpeado
+   (`K+0x6F4`, la velocidad de balanceo) a `gain` x (cambio - threshold) rad/s, como máximo `cap`, mantenida durante 40 pasos con un decaimiento lineal (un empujón de un solo paso
+   lo deshacen los muelles). La conducción normal cambia la velocidad lateral unos ~0.2 m/s por paso: no ocurre nada. Un salto del coche (> 3 m en
+   un paso: reset-to-track, una reaparición) o de su velocidad (> 60 m/s) no es un impacto y descarta lo que se estaba manteniendo.
 
-## Settings (`mod.toml`)
+## Ajustes (`mod.toml`)
 
-| key | default | meaning |
+| clave | por defecto | significado |
 | --- | --- | --- |
-| `style` | `"realistic"` | `realistic`: only big impacts roll the car. `arcade`: the threshold is halved and the gain x1.5, so smaller hits roll it |
-| `threshold` | `3.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
-| `gain` | `2.5` | roll rate (rad/s) per m/s above the threshold (0 - 50) |
-| `cap` | `12.0` | largest roll rate (rad/s) the mod asks for (0 - 30) |
+| `style` | `"realistic"` | `realistic`: solo los impactos grandes hacen rodar el coche. `arcade`: el umbral se reduce a la mitad y la ganancia se multiplica por 1.5, así que golpes menores lo hacen rodar |
+| `threshold` | `3.0` | cambio de velocidad lateral en un paso (m/s) por encima del cual un golpe vuelca el coche (0.1 - 50) |
+| `gain` | `2.5` | velocidad de balanceo (rad/s) por cada m/s por encima del umbral (0 - 50) |
+| `cap` | `12.0` | mayor velocidad de balanceo (rad/s) que pide el mod (0 - 30) |
 
-An invalid value is logged and the default is used. Reference points (measured on the `rollover` pad route): the barrier at the end of the
-straight at ~38 m/s gives ~8.3 m/s of lateral change (rate 12, a tumble past upside down); the car lands, the springs bring it back and
-it drives on.
+Un valor inválido se registra en el log y se usa el valor por defecto. Puntos de referencia (medidos en la ruta de mando `rollover`): la barrera al final de la
+recta a ~38 m/s da ~8.3 m/s de cambio lateral (velocidad 12, una voltereta más allá de boca abajo); el coche aterriza, los muelles lo recuperan y
+sigue conduciendo.
 
-## Known limits
+## Límites conocidos
 
-- There is no roof collision in the game: a rolling car keeps its wheels' contact model and always recovers; it does not stay on its roof.
-- The clamp is lifted for every car: an AI car that tilts past 35 degrees is no longer held. AI cars get no impulses and none was seen to tilt
-  that far in the runs, but this is not proven for every track.
-- Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, not a replay, with input). With two humans
-  (ad hoc / split screen) nobody gets an impulse while the clamp stays lifted.
-- The roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
-- `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`);
-  `GT_MOD_ROLLOVER_LOG=1` logs the car's state (used by `tools/mod_rollover_check.sh`).
+- En el juego no hay colisión del techo: un coche que rueda conserva el modelo de contacto de sus ruedas y siempre se recupera; no se queda sobre el techo.
+- El límite se levanta para todos los coches: un coche de la IA que se incline más de 35 grados ya no se retiene. Los coches de la IA no reciben impulsos y no se vio que
+  ninguno se inclinara tanto en las pruebas, pero no está demostrado para todos los circuitos.
+- Solo el jugador recibe impulsos, y el jugador se identifica como exactamente un humano (vtable del piloto `0x08CC1F60`, no una repetición, con entrada). Con dos humanos
+  (ad hoc / pantalla dividida) nadie recibe un impulso mientras el límite sigue levantado.
+- El balanceo es una velocidad de balanceo mantenida, no una simulación física del impacto; los 40 pasos de empuje, la ganancia y el tope se ajustaron con un solo golpe contra una barrera.
+- `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` añade `<dv>` m/s de cambio lateral en la vista del rastreador en ese paso del coche del jugador (lo usa `mods_together_check`);
+  `GT_MOD_ROLLOVER_LOG=1` registra el estado del coche (lo usa `tools/mod_rollover_check.sh`).
 
 ## Tests
 
-`ctest --test-dir build` runs `rollover_test` (settings, threshold, cap, style, signs, decay, teleport guards). The in-game check lives in the
-decomp repo: `tools/mod_rollover_check.sh` (see `docs/MODS.md` there).
+`ctest --test-dir build` ejecuta `rollover_test` (ajustes, umbral, tope, estilo, signos, decaimiento, protecciones ante teletransportes). La comprobación en el juego está en el
+repositorio decomp: `tools/mod_rollover_check.sh` (véase `docs/MODS.md` allí).
