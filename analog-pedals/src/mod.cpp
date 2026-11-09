@@ -11,9 +11,9 @@
 // smallest press (0.1). Replays: 0x08896780 copies the pad record into its temp record a1 (0x0892B4B0, called at 0x088967D4,
 // 0x08896804 and 0x0889682C) and, while entry+0xA9 is set, records that temp record (0x08895A88 at 0x08896848); so the mod also
 // writes the analog values into the temp record right after that copy, and the replay records them. Without it a replay
-// played only the digital presses and the car stood still. The copy is recognised by its return address (one of the three
-// call sites) and its destination (the a1 of the human's 0x08896780 call), not by nesting: the fill hook's call_original
-// does not wrap the body's calls.
+// played only the digital presses and the car stood still. The copy is recognised by its destination (the a1 of the human's
+// 0x08896780 call; the first copy into it after that call's hook, once per fill): not by nesting (the fill hook's
+// call_original does not wrap the body's calls) nor by return address ($ra is not kept by the decompiled 0x08896780).
 // Which car a 0x08948B78 call belongs to is proven by call order, not by assumption. The record is a stack buffer of 0x0894DD9C
 // shared by all cars (sp_entry - 0x50: frame 0x70, record at +0x20, asm 0x0894DE44), so its address says nothing about the car.
 // Per car, mode 0, the step calls controller slot 0xC = 0x08899094, which fetches the driver entry of that car index
@@ -43,7 +43,6 @@ constexpr std::uint32_t kStep = 0x0894DD9C;         // a0 = world
 constexpr std::uint32_t kClampRecord = 0x08948B78;  // a0 = input record
 constexpr std::uint32_t kFillRecord = 0x08896780;   // a0 = driver entry, a1 = temp record, a2 = car index (entry vtable slot 0x64)
 constexpr std::uint32_t kCopyRecord = 0x0892B4B0;   // a0 = dest record, a1 = source record (32 bytes)
-constexpr std::uint32_t kCopyInFill[3] = {0x088967DC, 0x0889680C, 0x08896834};  // return addresses of its calls in 0x08896780
 constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
 constexpr std::uint32_t kEntryReplay = 0xA8;
 // The human entry that reads the pad: +0x6C points to the pad input object (the same object, 0x094168D8, in a race and in
@@ -197,10 +196,9 @@ void on_fill_record(GtModCtx *c) {
 
 // The pad record copied into the human fill's temp record: inject before the replay recorder takes it (once per fill).
 void on_copy_record(GtModCtx *c) {
-    const std::uint32_t dest = g_api->gpr(c, 4), ra = g_api->gpr(c, 31);
+    const std::uint32_t dest = g_api->gpr(c, 4);
     g_api->call_original(c);
     if (g_player_fill_buffer == 0 || dest != g_player_fill_buffer || g_fill_injected || menu_open()) return;
-    if (ra != kCopyInFill[0] && ra != kCopyInFill[1] && ra != kCopyInFill[2]) return;
     g_fill_injected = true;
     inject_both(c, dest);
 }
