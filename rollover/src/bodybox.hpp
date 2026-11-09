@@ -126,9 +126,9 @@ inline Result resolve(State &s, const Box &b, const Ground &g, const Params &pr,
         }
         if (!any) break;
     }
-    // cap the rise: while the car is tilted past the activation angle (or touching) the centre may not move away from the ground faster than
-    // max_up_speed (the game's own step keeps adding upward speed to a rolled car, and the roof corners hop it: 1.5 m up without the cap)
-    if (tilted || res.contacts > 0) {
+    // cap the rise: in a step where the body touches the ground the centre may not move away from it faster than max_up_speed (the roof corners
+    // of a spinning car hop it 1.5 m up without the cap). Never without a contact: a car in the air is the game's.
+    if (res.contacts > 0) {
         const float vn_after = dot(s.v, n);
         if (vn_after > pr.max_up_speed) {
             s.v = s.v - n * (vn_after - pr.max_up_speed);

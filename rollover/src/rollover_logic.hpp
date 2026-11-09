@@ -22,8 +22,8 @@ struct Settings {
     float cap = 12.0f;       // rad/s, largest roll rate requested
     bool body_box = true;    // the body box (bodybox.hpp): the tumbling car's body stops at the ground instead of sinking into it
     float box_height = 0.8f;  // m: the box's roof above the body origin (the game has no body height; a heuristic: roof ~1.2 m over the road)
-    float box_kick_cap = 0.5f; // m/s: largest speed away from the ground the car keeps in a step where its body touches it (limits the hop)
-    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures)
+    float box_kick_cap = 0.5f; // m/s: largest speed away from the ground the car keeps in a step where its body touches it (limits the hop; never applied without a contact)
+    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.

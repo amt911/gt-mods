@@ -161,14 +161,15 @@ void on_flag_read(GtModCtx *c) {
 // The game has no body collision: a rolling car's roof sinks 0.5-1.3 m into the road (the wheels are its only contact). A box around the
 // body (bodybox.hpp; 4 roof corners always, the 4 floor corners only past ~40 deg of tilt, so an upright car is untouched) is pushed out of
 // the ground. The ground comes from the game's own road query results, the four wheel contact records word(car+0x10) + 0x38*i: float +0x00 x,
-// +0x08 = -y, +0x0C = ground height there, byte +0x2C != 0 = no road under that wheel (the height is then a fallback and is skipped). The
+// +0x08 = -y, +0x0C = ground height there, byte +0x2C != 0 = no road under that wheel (the height is then a fallback and is skipped; off-track terrain, word 0x0300, has byte +0x2C = 0 and a real height). The
 // heights stay valid while the car is on its roof. Nothing is written unless a corner penetrates, so the car is byte-identical to the stock
 // game until it touches the ground with its body. The box size comes from the same records (wheelbase, track) and the car record
 // word(car+0xC) (+0x40/+0x48 = the axles' offsets from the body origin); the game has no body dimensions, so the length, width and the
 // floor/roof heights are a heuristic (docs/FACTS.md of the host repo, "rollover body box"). Walls are not handled.
 bodybox::Box g_box;
 bodybox::Params g_box_params;
-bool g_box_sized = false;
+bool g_box_sized = false, g_have_rows = false;
+bodybox::V3 g_prev_rows[3];
 float g_gx = 0.0f, g_gy = 0.0f;    // ground slope fitted while the car is upright, kept while it tumbles (the wheel points are not spread then)
 unsigned g_box_steps = 0, g_box_touch_steps = 0, g_box_touch_upright = 0, g_box_tilted_steps = 0;
 float g_box_min_clear = 1e9f, g_box_min_roof = 1e9f;
@@ -177,6 +178,7 @@ bodybox::V3 rd3(GtModCtx *c, std::uint32_t at) { const GtModApi &a = *g_api; ret
 
 void reset_box_state() {
     g_box_sized = false;
+    g_have_rows = false;
     g_gx = g_gy = 0.0f;
     g_box_steps = g_box_touch_steps = g_box_touch_upright = g_box_tilted_steps = 0;
     g_box_min_clear = g_box_min_roof = 1e9f;
@@ -191,7 +193,7 @@ bool read_ground(GtModCtx *c, std::uint32_t car, float up_z, bodybox::Ground *g)
     int n = 0;
     for (int i = 0; i < 4; ++i) {
         const std::uint32_t r = cr + 0x38 * i;
-        if (a.read8(c, r + 0x2C) != 0) continue;
+        if (a.read8(c, r + 0x2C) != 0) continue;  // byte +0x2C of the surface word: 1 = no road under the wheel (the low byte is 0 on asphalt and on 0x0300 off-track terrain, which has a ground height too)
         xs[n] = a.readf(c, r);
         ys[n] = -a.readf(c, r + 8);
         hs[n] = a.readf(c, r + 0xC);
@@ -242,15 +244,31 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
     st.p = rd3(c, body + kPos);
     st.v = rd3(c, body + kVel);
     st.f = rd3(c, body + kForward); st.l = rd3(c, body + kLateral); st.u = rd3(c, body + kUp);
-    // body rates (docs/FACTS.md): +0x6F4 about the forward axis, +0x6F0 about the lateral one, +0x6F8 about up
+    // body rates (docs/FACTS.md): +0x6F4 about the forward axis (roll; measured), +0x6F0 / +0x6F8 taken as the lateral / up axes with sign + (assumed, small in a roll tumble: < 1.6 rad/s)
     const float roll = a.readf(c, body + kRollRate), pitch = a.readf(c, body + 0x6F0), yaw = a.readf(c, body + 0x6F8);
     st.w = st.f * roll + st.l * pitch + st.u * yaw;
     bodybox::Ground g;
     if (!read_ground(c, car, st.u.z, &g)) return;
+    if (g_settings.sabotage == 7) g.h0 += 0.6f;  // check build: the ground 0.6 m too high, floor corners always active: pushes an upright car
     ++g_box_steps;
     const float upn = bodybox::dot(st.u, g.normal());
+    // measurement of the body-rate axes/signs (docs/FACTS.md "rollover body box"): the world angular velocity from the change of the basis rows over
+    // the last step, projected on the car's own axes, against the three rates the game keeps
+    if (g_log && g_have_rows && upn < 0.9f) {
+        const bodybox::V3 cur[3] = {st.f, st.l, st.u};
+        bodybox::V3 wm{0, 0, 0};
+        for (int i = 0; i < 3; ++i) wm = wm + bodybox::cross(g_prev_rows[i], cur[i] - g_prev_rows[i]) * 0.5f;
+        wm = wm * 60.0f;
+        char line[220];
+        std::snprintf(line, sizeof line, "WMEAS st=%u meas(f,l,u)=%.2f,%.2f,%.2f rates(roll,pitch,yaw)=%.2f,%.2f,%.2f", g_car_steps, bodybox::dot(wm, st.f), bodybox::dot(wm, st.l),
+                      bodybox::dot(wm, st.u), roll, pitch, yaw);
+        a.log(g_self, line);
+    }
+    g_prev_rows[0] = st.f; g_prev_rows[1] = st.l; g_prev_rows[2] = st.u; g_have_rows = true;
     const bodybox::State before = st;
-    const bodybox::Result res = bodybox::resolve(st, g_box, g, g_box_params, apply);
+    bodybox::Params params = g_box_params;
+    if (g_settings.sabotage == 7) params.tilt_active_cos = 2.0f;
+    const bodybox::Result res = bodybox::resolve(st, g_box, g, params, apply);
     g_box_min_clear = std::min(g_box_min_clear, res.min_clear);
     if (upn < g_box_params.tilt_active_cos) { ++g_box_tilted_steps; g_box_min_roof = std::min(g_box_min_roof, res.min_clear_roof); }
     if (res.contacts) {
@@ -261,8 +279,8 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
         a.writef(c, body + kPos, st.p.x); a.writef(c, body + kPos + 4, st.p.y); a.writef(c, body + kPos + 8, st.p.z);
         a.writef(c, body + kVel, st.v.x); a.writef(c, body + kVel + 4, st.v.y); a.writef(c, body + kVel + 8, st.v.z);
         a.writef(c, body + kRollRate, bodybox::dot(st.w, st.f));
-        a.writef(c, body + 0x6F0, bodybox::dot(st.w, st.l));
-        a.writef(c, body + 0x6F8, bodybox::dot(st.w, st.u));
+        // pitch (+0x6F0) and yaw (+0x6F8) are NOT written back: their mapping to the body axes was not established (docs/FACTS.md, "Rollover body box": the WMEAS fit of
+        // a roll-dominated tumble gives R2 0.73 / 0.37 and no clean axis or sign), so a contact's torque about the lateral and up axes is dropped rather than written with a guessed sign
     }
     if (g_log && (upn < 0.9f || res.contacts)) {  // clear = the lowest of the 8 corners above the ground at the start of the step (negative = inside it)
         char line[300];
@@ -390,6 +408,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
             at = end + 1;
         }
     }
+    if (g_settings.sabotage == 8) g_box_params.max_up_speed = 20.0f;  // check build: no effective cap
     if (g_settings.sabotage == 6) g_settings.body_box = false;  // check build: the box off, the log still measures
     if (const char *log = std::getenv("GT_MOD_ROLLOVER_LOG")) g_log = *log != '\0' && std::string(log) != "0";
     if (const char *fake = std::getenv("GT_MOD_ROLLOVER_FAKE")) {

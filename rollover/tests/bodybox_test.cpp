@@ -14,6 +14,7 @@ static void rotate(State &s, float dt) {  // rotate the rows by w*dt (Rodrigues)
 }
 
 // A free box under gravity at the physics step (60 Hz). The wheels' support is not modelled, so the floor corners stay active.
+static bool g_left_handed = false;  // the game's basis (f, l = right, u) is left-handed: f x l = -u (docs/FACTS.md)
 static State drop(float tilt, V3 w, V3 v, float gx, int steps, float *worst_clear) {
     Box b;
     Params pr;
@@ -23,7 +24,7 @@ static State drop(float tilt, V3 w, V3 v, float gx, int steps, float *worst_clea
     g.gx = gx;
     State s;
     s.p = {0, 0, 2.0f}; s.v = v; s.w = w;
-    s.f = {1, 0, 0}; s.l = {0, 1, 0}; s.u = {0, 0, 1};
+    s.f = {1, 0, 0}; s.l = {0, g_left_handed ? -1.0f : 1.0f, 0}; s.u = {0, 0, 1};
     State t = s; t.w = {1, 0, 0}; t.w = t.w * (tilt / (1.0f / 60.0f)); rotate(t, 1.0f / 60.0f);
     s.f = t.f; s.l = t.l; s.u = t.u;
     *worst_clear = 1e9f;
@@ -50,6 +51,16 @@ int main() {
     // a slope with friction holds it
     s = drop(0.3f, {12, 0, 0}, {-20, 0, 0}, 0.15f, 1200, &worst);
     assert(len(s.v) < 0.05f && worst > -0.3f);
+    // the same drops with the game's left-handed basis (l = -y): the response must not depend on the handedness of the rows
+    g_left_handed = true;
+    s = drop(3.14159f, {0, 0, 0}, {0, 0, 0}, 0.0f, 1200, &worst);
+    assert(len(s.v) < 0.05f && len(s.w) < 0.05f && worst > -0.1f);
+    s = drop(0.3f, {12, 0, 0}, {-20, 0, 0}, 0.0f, 1200, &worst);
+    assert(len(s.v) < 0.05f && len(s.w) < 0.05f && worst > -0.3f);
+    // a pitching tumble (end over end, about l) comes to rest too
+    s = drop(0.3f, {0, 9, 0}, {-15, 0, 0}, 0.0f, 1200, &worst);
+    assert(len(s.v) < 0.05f && worst > -0.4f);
+    g_left_handed = false;
     // nothing touching: nothing changes
     State t; t.p = {0, 0, 3}; t.f = {1, 0, 0}; t.l = {0, 1, 0}; t.u = {0, 0, 1}; t.v = {5, 0, -1}; t.w = {0, 1, 0};
     const State before = t;
@@ -61,7 +72,7 @@ int main() {
     State u = before; u.v = {0, 0, -1}; u.w = {0, 0, 0};
     const Result r2 = resolve(u, b, gg, pr);
     assert(r2.contacts == 0 && u.v.z == -1.0f);
-    // the shipped defaults (soft, position push 1.0, kick cap 3 m/s): the same drops come to rest, and a roof hitting at a lever arm
+    // the shipped defaults (soft, position push 1.0, kick cap 0.5 m/s): the same drops come to rest, and a roof hitting at a lever arm
     // does not launch the car
     {
         Box sb; Params sp; Ground sg;
