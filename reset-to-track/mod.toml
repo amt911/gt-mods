@@ -10,6 +10,6 @@ hold_ms = 500
 cooldown_ms = 1000
 rewind_ms = 2500
 reset_keys = "R"
-# a ring pose must have this many metres of straight asphalt ahead (along its heading, 1.5 m to each side too) to be restored: a pose that
-# points off the road would put the car out of bounds again
+# a ring pose is preferred when the car's own path after it stays within 2.5 m of the straight line along its heading for this many metres
+# (a pose pointing off the road would put the car out of bounds again); with none, the longest such run of at least 15 m; else nothing is restored
 ahead_m = 40
