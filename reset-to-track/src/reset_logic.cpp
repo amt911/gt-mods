@@ -52,22 +52,6 @@ bool is_good(const CarSample &s) {
            s.heading_cos > kMinHeadingCos;
 }
 
-bool ahead_on_asphalt(const RoadQuery &query, float x, float y, float z, float yaw, float ahead_m) {
-    if (!std::isfinite(x + y + z + yaw + ahead_m) || ahead_m <= 0.0f) return false;
-    const float fx = -std::sin(yaw), fy = std::cos(yaw), rx = std::cos(yaw), ry = std::sin(yaw);
-    static const float kSides[] = {0.0f, -kSideMeters, kSideMeters};
-    for (int i = 1; i <= static_cast<int>(std::ceil(ahead_m / 4.0f)); ++i) {
-        const float d = std::min(4.0f * i, ahead_m);  // 4, 8 .. and the last step to ahead_m
-        for (float side : kSides) {
-            RoadPoint p;
-            if (!query(x + fx * d + rx * side, y + fy * d + ry * side, &p) || !p.asphalt || !std::isfinite(p.ground) ||
-                std::fabs(p.ground - (z - kGroundBelowOrigin)) >= kLevelTolerance)
-                return false;
-        }
-    }
-    return true;
-}
-
 bool HoldDetector::update(bool held) {
     if (!held) {
         run_ = 0;
@@ -80,8 +64,8 @@ bool HoldDetector::update(bool held) {
     return true;
 }
 
-void PoseRing::push(std::int64_t step, const Pose &pose) {
-    items_.push_back(Item{step, pose});
+void PoseRing::push(std::int64_t step, const Pose &pose, bool pinned) {
+    items_.push_back(Item{step, pose, pinned});
     if (items_.size() > capacity_) items_.erase(items_.begin());
 }
 
@@ -98,55 +82,80 @@ const Pose *PoseRing::pick(std::int64_t now, int min_age, int max_age) const {
     return oldest;
 }
 
+float PoseRing::run_after(std::size_t index, float tolerance) const {
+    if (items_[index].pinned) return 1e9f;
+    const Pose &p = items_[index].pose;
+    const float yaw = p.v[14], fx = -std::sin(yaw), fy = std::cos(yaw), rx = std::cos(yaw), ry = std::sin(yaw);
+    float run = 0.0f;
+    for (std::size_t j = index + 1; j < items_.size(); ++j) {
+        if (items_[j].step - items_[j - 1].step > kPoseEveryNSteps) break;  // not a continuous run of good poses
+        const float dx = items_[j].pose.v[0] - p.v[0], dy = items_[j].pose.v[1] - p.v[1];
+        const float along = dx * fx + dy * fy, lateral = dx * rx + dy * ry;
+        if (!std::isfinite(along + lateral) || along < run || std::fabs(lateral) > tolerance) break;
+        run = along;
+    }
+    return run;
+}
+
+const Pose *PoseRing::pick_clear(std::int64_t now, int min_age, int max_age, float ahead, float floor, float tolerance, float *run_out) const {
+    const Pose *best = nullptr;
+    float best_run = -1.0f;
+    for (std::size_t i = items_.size(); i-- > 0;) {
+        const std::int64_t age = now - items_[i].step;
+        if ((age < min_age && !items_[i].pinned) || age > max_age) continue;  // a restored pose is eligible at any age (a second press goes back there)
+        const float run = run_after(i, tolerance);
+        if (run >= ahead) {  // newest first: the first preferred pose is the newest
+            if (run_out) *run_out = run;
+            return &items_[i].pose;
+        }
+        if (run > best_run) {
+            best_run = run;
+            best = &items_[i].pose;
+        }
+    }
+    if (run_out) *run_out = best_run;
+    return best_run >= floor ? best : nullptr;
+}
+
 Resetter::Resetter(const Settings &s)
     : s_(s), rewind_steps_(s.sabotage == 3 ? 0 : steps_for_ms(s.rewind_ms)), cooldown_steps_(steps_for_ms(s.cooldown_ms)), hold_(steps_for_ms(s.hold_ms)),
       ring_(kRingCapacity) {}
 
 void Resetter::lose_car() {
-    clear_ring();
+    ring_.clear();
     now_ = 0;
     last_reset_ = -1;
     have_prev_ = false;
     hold_ = HoldDetector(steps_for_ms(s_.hold_ms));
 }
 
-std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current, bool button_held, std::uint32_t hint0, std::uint32_t hint1) {
+std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current, bool button_held) {
     ++now_;
     refused_ = false;
     if (have_prev_ && std::hypot(std::hypot(current.v[0] - prev_pos_[0], current.v[1] - prev_pos_[1]), current.v[2] - prev_pos_[2]) > kJumpMeters)
-        clear_ring();  // not our own restore (that updates prev_pos_): a respawn, a new attempt, a long gap
+        ring_.clear();  // not our own restore (that updates prev_pos_): a respawn, a new attempt, a long gap
     prev_pos_[0] = current.v[0]; prev_pos_[1] = current.v[1]; prev_pos_[2] = current.v[2];
     have_prev_ = true;
     const bool press = hold_.update(button_held);
     const bool sabotage_newest = s_.sabotage == 2;
-    if (now_ % kPoseEveryNSteps == 0 && (sabotage_newest || is_good(sample))) {
-        if (deferred_ && !sabotage_newest) pending_.push_back(Candidate{now_, epoch_, current, hint0, hint1});  // the tick decides (look-ahead rule)
-        else ring_.push(now_, current);
-        if (pending_.size() > 8) pending_.erase(pending_.begin());
-    }
+    if (now_ % kPoseEveryNSteps == 0 && (sabotage_newest || is_good(sample))) ring_.push(now_, current);
     if (!press) return std::nullopt;
     if (last_reset_ >= 0 && now_ - last_reset_ < cooldown_steps_) return std::nullopt;
-    const Pose *pick = ring_.pick(now_, sabotage_newest ? 0 : rewind_steps_, sabotage_newest ? (1 << 30) : kMaxPoseAgeSteps);
+    const Pose *pick = nullptr;
+    if (sabotage_newest || s_.sabotage == 3 || s_.sabotage == 5)  // sabotage builds 2, 3, 5: no straight-ahead rule, the old pick (newest pose at least rewind_ms old)
+        pick = ring_.pick(now_, sabotage_newest ? 0 : rewind_steps_, sabotage_newest ? (1 << 30) : kMaxPoseAgeSteps);
+    else
+        pick = ring_.pick_clear(now_, rewind_steps_, kMaxPoseAgeSteps, s_.ahead_m, kMinAheadMeters, kPathTolerance, &last_run_);
     if (pick == nullptr) {
         refused_ = true;
         return std::nullopt;
     }
     const Pose restored = *pick;
-    clear_ring();
-    ring_.push(now_, restored);  // a second press right after goes back to the same place
+    ring_.clear();
+    ring_.push(now_, restored, true);  // a second press right after goes back to the same place
     last_reset_ = now_;
     prev_pos_[0] = restored.v[0]; prev_pos_[1] = restored.v[1]; prev_pos_[2] = restored.v[2];
     return restored;
-}
-
-std::vector<Resetter::Candidate> Resetter::take_pending() {
-    std::vector<Candidate> out;
-    out.swap(pending_);
-    return out;
-}
-
-void Resetter::accept(const Candidate &c) {
-    if (c.epoch == epoch_) ring_.push(c.step, c.pose);
 }
 
 std::optional<std::uint32_t> parse_fake(const char *env) {
