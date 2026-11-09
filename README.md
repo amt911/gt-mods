@@ -1,76 +1,75 @@
 # gt-mods
 
-> Versión en español. Proyecto principal: [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp) · mapa de progreso en línea: <https://claude.ai/artifact/V93Bh8ZWDTAUGfWaoZa5hq>
+> Main project: [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp) · online decompilation map: <https://claude.ai/artifact/V93Bh8ZWDTAUGfWaoZa5hq>
 
-Mods nativos para la versión de PC de la decompilación de Gran Turismo (PSP),
-[gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp). Cada mod es una biblioteca compartida más un
-manifiesto `mod.toml`, que `gt_play` carga a través del SDK con ABI de C (`include/gt_mod/gt_mod_api.h`).
+Native mods for the PC build of the Gran Turismo (PSP) decompilation,
+[gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp). Each mod is a shared library plus a
+`mod.toml` manifest, loaded by `gt_play` through the C-ABI SDK (`include/gt_mod/gt_mod_api.h`).
 
-Aquí no hay nada derivado del juego: solo código de mods escrito a mano.
+Nothing game-derived lives here: only hand-written mod code.
 
 ## Mods
 
-- `analog-pedals` - gatillos analógicos / teclas del teclado asignados al acelerador y al freno (0..1). Desactivado por defecto.
-  Ajustes en su `mod.toml` (`deadzone` en [0,1), `curve` > 0, `ramp_ms` >= 0; un valor inválido se registra en el log y se usa el
-  valor por defecto). Mando: el gatillo derecho del primer mando de juego de SDL = acelerar, el izquierdo = frenar. Teclado: `throttle_keys`
-  / `brake_keys` (nombres de tecla de SDL, por defecto `Up,W` / `Down,S`), con rampa durante `ramp_ms`. Los botones del propio mando siguen
-  funcionando: gana la pulsación mayor, salvo mientras hay un gatillo pulsado: entonces decide el gatillo (gt_play también asigna un gatillo
-  pulsado más allá de ~25 % a Cruz/Cuadrado, lo que de otro modo convertiría media pulsación en una completa). Funciona en carreras y en
-  contrarreloj (Time Trial). El pedal sigue al gatillo exactamente (el mod escribe el valor del registro cuya respuesta en el juego es ese pedal),
-  salvo por debajo de 0.05 (no se inyecta) y entre 0.05 y 0.1 (la pulsación más pequeña del juego es 0.1). Solo se toca el coche en vivo del jugador (no los coches de la IA, ni durante una repetición).
-  `GT_MOD_PEDALS_FAKE=0.5,0.3` sustituye la entrada por un acelerador/freno fijos (lo usa la comprobación en el juego);
-  `GT_MOD_PEDALS_LOG=1` registra en el log los pedales del jugador y de un coche de la IA una vez por segundo.
-- `draw-distance` - aleja el plano de recorte lejano (*far clip plane*) del mundo de la carrera, de modo que el decorado lejano (edificios, colinas, gradas) se
-  vea en lugar de aparecer de golpe. El juego no descarta geometría por ese plano (envía la misma geometría y la GPU recorta), así que un
-  far mayor revela lo que ya se enviaba; el coste son píxeles de GPU, no CPU del juego. Post-hook en el constructor de profundidad `0x08AF4B4C` (llamado desde `0x0890E41C`
-  con near = `self+4`, far = `self+0xC` = 1200 en las carreras vistas): los términos de la matriz m10/m14 se reescriben para `far * far_scale`
-  (nunca se escriben datos de la escena; un hook en `0x0890E41C` que escale y restaure `self+0xC` no hace nada, porque `call_original`
-  retorna antes de que se ejecute el resto de ese cuerpo). `far_scale` en `mod.toml`, por defecto `1.5` (era 2.5; conserva el 81 % del detalle lejano extra que daba 2.5, medido en fotogramas)
-  (1200 -> 1800), rango 1.0-6.0 (se limita al rango y se registra un aviso; los valores no numéricos mantienen el valor por defecto); 1.0 = fotogramas idénticos a no tener
-  el mod (el mod no escribe nada). Valores mayores adelgazan el búfer de profundidad (unas pocas motas en la geometría lejana con 8000). El pase del cielo y
-  el pase de reflejos del coche no usan esta función y no se tocan. Desactivado por defecto; se activa y desactiva en vivo desde el menú F9.
-  `GT_MOD_DRAWDIST_SCALE=<n>` sustituye el ajuste (lo usa la comprobación en el juego, `tools/mod_drawdist_check.sh`);
-  `GT_MOD_DRAWDIST_LOG=1` registra near/far cada 120 ediciones.
-- `orbit-camera` - cámara orbital al estilo de Gran Turismo 7 en el stick derecho. La dirección del stick elige la dirección de la mirada alrededor del
-  coche del jugador (derecha = +90 deg, izquierda = -90 deg, adelante = 0); tirando hacia atrás (más allá de `back_threshold`) o pulsándolo (R3) = vista trasera
-  (180 deg). La cámara gira alrededor del coche en las vistas de persecución y mira alrededor desde el asiento en las vistas de parachoques/cabina (el pivote es
-  el coche, que ahí está ~a la altura del ojo). Como en GT7, en todas las vistas salvo la de persecución lejana (tercera persona completa) el stick gira
-  en sentido contrario (`invert_outside_chase`, por defecto true; la vista de persecución lejana se reconoce por la distancia del coche al ojo, > 6.5); sin inclinación desde el stick (`pitch_deg`, por defecto 0, añade una inclinación constante). Suavizado con una
-  constante de tiempo `smooth_ms` (80) y vuelve a 0 al soltar; zona muerta `deadzone` (0.25). Teclado: `look_left_keys` /
-  `look_right_keys` / `look_back_keys` (nombres de tecla de SDL, por defecto `J` / `L` / `K`, libres en los atajos por defecto de gt_play). Solo mientras se
-  conduce (coche del jugador en vivo, no una repetición, no un menú); sin entrada no escribe nada. Desactivado por defecto; se activa y desactiva en vivo desde el
-  menú F9. `GT_MOD_CAMERA_FAKE=<yaw>[,<pitch>]` fija el ángulo (lo usa la comprobación en el juego, `tools/mod_camera_check.sh`);
-  `GT_MOD_CAMERA_LOG=1` registra yaw, escena y pivote una vez por segundo. Al tirar del stick hacia atrás el ángulo se mezcla suavemente con la vista
-  trasera (180 completos solo con el stick del todo atrás). La órbita está activa mientras sigan llegando pasos de física (un hueco de 10 fotogramas, contados por las
-  subidas del HUD, la termina). Límites conocidos: en las vistas de parachoques/cabina el pivote es el coche, que no está exactamente a la altura del ojo (la cámara
-  gira un poco en lugar de girar sobre sí misma); el mod abre su propio manejador de mando SDL junto al del host; las teclas de mirada
-  (J/K/L) también actúan mientras el menú de mods F9 está abierto (el SDK no puede saber si el menú está abierto).
-- `reset-to-track` - un botón devuelve el coche del jugador a la carretera, derecho y mirando hacia donde iba, como "recuperar coche" en los
-  juegos de carreras modernos. Botón: Select del mando mantenido 0.5 s (`hold_ms`), o la tecla `reset_keys` (por defecto `R`). Mientras se conduce guarda un
-  anillo de poses "buenas" (las cuatro ruedas sobre asfalto, vector arriba z > 0.9, más rápido que 5 m/s, velocidad de guiñada <= 0.6 rad/s, velocidad dentro de ~25 deg de
-  la dirección; una cada 15 pasos); el reinicio restaura la pose más reciente con al menos `rewind_ms` (2500) de antigüedad, pone a cero velocidad, rapidez y todas las
-  velocidades de rotación (el coche arranca desde parado) e ignora nuevas pulsaciones durante `cooldown_ms` (1000). No ocurre nada si todavía no
-  existe ninguna pose buena. El anillo se vacía cuando el coche salta más de 15 m en un paso (una reaparición, un nuevo intento), tras 2 s sin pasos (el mod
-  se desactivó en F9, una pausa larga) y con un coche nuevo; las poses de más de 8 s nunca se restauran. Permitido en todas partes (incluida la
-  contrarreloj); solo el coche en vivo del jugador, nunca una repetición. Desactivado por defecto; se activa y desactiva en vivo desde el menú F9.
-  **Select y la cámara:** el juego usa Select para cambiar la vista, así que durante la carrera el mod oculta al juego un Select mantenido; una pulsación
-  más corta que `hold_ms` se reproduce como un toque al soltar (la vista de cámara sí cambia), una más larga reinicia y la vista no cambia.
-  Fuera de una carrera (menús, pausa) Select no se toca. **Límites conocidos:** la marcha, las rpm y los campos de posición previa no se restauran (no están
-  localizados; la caja de cambios automática vuelve a arrancar bien desde parado, la comprobación en el juego exige > 15 m/s con el acelerador pulsado tras un reinicio);
-  el contador de vueltas y el cronómetro no se rebobinan (medido en un reinicio a mitad de vuelta: HUD 0'24.000 -> 0'27.000 en 3 s de juego, vuelta 1/2 sin cambios), y un reinicio que cruce la línea de salida/meta no se probó (ninguna ruta completa una vuelta) y puede
-  contar la vuelta dos veces; la grabación de un fantasma / repetición de contrarreloj mostrará el salto (sin probar); no se usa geometría del circuito, el coche vuelve
-  donde estaba, no al asfalto más cercano. `GT_MOD_RESET_FAKE=<step>` mantiene el botón desde ese paso del coche del jugador (una ayuda de depuración); `GT_MOD_RESET_LOG=1` registra el estado del coche (lo usa `tools/mod_reset_check.sh`).
-- `cheats` - trucos para carrera como filas del menú F9 (teclado o mando): cámara lenta (0.5x / 0.25x, coches del jugador y de la IA) y congelar la IA. Necesita la API de mods v2
-  (`api = 2`). Desactivado por defecto y ambos trucos empiezan desactivados. Véase `cheats/README.md`; comprobación: `tools/mod_cheats_check.sh` en el repositorio del host.
-- `rollover` - permite que el coche del jugador vuelque, algo que el juego original no puede (limita la inclinación a 35 grados). Engancha el lector de la bandera
-  `0x0894CCB8` (un interruptor dormido) para levantar el límite y añade una velocidad de balanceo ante un impacto lateral fuerte (un cambio de velocidad lateral superior a `threshold`
-  en un solo paso de física; `gain`, `cap`, `style = realistic|arcade` en `mod.toml`); la máquina de estados de vuelco dormida que la bandera también despertaría
-  (el coche se hunde a través de la carretera y vuelve a salir) se mantiene dormida. Opt-in: `enabled = false` por defecto; se activa y desactiva en vivo desde el menú F9.
-  Véase `rollover/README.md`. Comprobación en el juego: `tools/mod_rollover_check.sh`.
+- `analog-pedals` - analog triggers / keyboard keys mapped to throttle and brake (0..1). Disabled by default.
+  Settings in its `mod.toml` (`deadzone` in [0,1), `curve` > 0, `ramp_ms` >= 0; an invalid value is logged and the default
+  used). Controller: the first SDL game controller's right trigger = accelerate, left trigger = brake. Keyboard: `throttle_keys`
+  / `brake_keys` (SDL key names, default `Up,W` / `Down,S`), ramped over `ramp_ms`. The pad's own buttons keep working: the
+  larger press wins, except while a trigger is pressed: then the trigger decides (gt_play also maps a trigger past ~25 % to
+  Cross/Square, which would otherwise turn a half press into a full one). Works in races and Time Trial. The pedal follows the trigger exactly (the mod writes the record value whose game response is that pedal),
+  except below 0.05 (not injected) and 0.05-0.1 (the game's smallest press is 0.1). Only the player's live car is touched (not AI cars, not during a replay).
+  `GT_MOD_PEDALS_FAKE=0.5,0.3` replaces the input with a fixed throttle/brake (used by the in-game check);
+  `GT_MOD_PEDALS_LOG=1` logs the player's and an AI car's pedals once a second.
+- `draw-distance` - pushes the race world's far clip plane further away, so far scenery (buildings, hills, grandstands) shows
+  instead of popping in. The game does not cull by that plane (it submits the same geometry and the GPU clips), so a larger far
+  reveals what was already submitted; the cost is GPU pixels, not game CPU. Post-hook on the depth builder `0x08AF4B4C` (called from `0x0890E41C`
+  with near = `self+4`, far = `self+0xC` = 1200 in the races seen): the matrix terms m10/m14 are rewritten for `far * far_scale`
+  (scene data is never written; a hook on `0x0890E41C` that scales and restores `self+0xC` does nothing, because `call_original`
+  returns before the rest of that body runs). `far_scale` in `mod.toml`, default `1.5` (keeps 81 % of the extra far detail 2.5 gave, measured on frames; was 2.5)
+  (1200 -> 1800), range 1.0-6.0 (clamped, a warning is logged; non-numbers keep the default); 1.0 = frames identical to no
+  mod (the mod writes nothing). Larger values thin the depth buffer (a few speckles on far geometry at 8000). The sky pass and
+  the car reflection pass do not use this function and are untouched. Disabled by default; toggles live from the F9 menu.
+  `GT_MOD_DRAWDIST_SCALE=<n>` overrides the setting (used by the in-game check, `tools/mod_drawdist_check.sh`);
+  `GT_MOD_DRAWDIST_LOG=1` logs near/far every 120 edits.
+- `orbit-camera` - Gran Turismo 7 style orbit camera on the right stick. The stick's direction picks the look direction around the
+  player's car (right = +90 deg, left = -90 deg, forward = 0); pulled back (past `back_threshold`) or clicked (R3) = rear view
+  (180 deg). The camera swings around the car in chase views and looks around from the seat in bumper/cockpit views (the pivot is
+  the car, which there is ~at the eye). Like GT7, in every view except the far (full third-person) chase view the stick turns the
+  other way (`invert_outside_chase`, default true; the far chase view is told by the car's distance from the eye, > 6.5); no pitch from the stick (`pitch_deg`, default 0, adds a constant tilt). Smoothed with a
+  `smooth_ms` time constant (80) and back to 0 on release; dead zone `deadzone` (0.25). Keyboard: `look_left_keys` /
+  `look_right_keys` / `look_back_keys` (SDL key names, defaults `J` / `L` / `K`, free in gt_play's default bindings). Only while
+  driving (live player car, not a replay, not a menu); with no input it writes nothing. Disabled by default; toggles live from the
+  F9 menu. `GT_MOD_CAMERA_FAKE=<yaw>[,<pitch>]` fixes the angle (used by the in-game check, `tools/mod_camera_check.sh`);
+  `GT_MOD_CAMERA_LOG=1` logs yaw, scene and pivot once a second. Pulling the stick back blends the angle smoothly into the rear
+  view (full 180 only at full back). The orbit is live while physics steps keep arriving (a gap of 10 frames, counted by the HUD's
+  uploads, ends it). Known limits: in bumper/cockpit views the pivot is the car, which is not exactly at the eye (the camera
+  swings slightly instead of turning in place); the mod opens its own SDL controller handle next to the host's; the look keys
+  (J/K/L) also act while the F9 mod menu is open (the SDK cannot tell whether the menu is open).
+- `reset-to-track` - one button puts the player's car back on the road, upright and facing the way it was going, like "recover car" in
+  modern racing games. Button: pad Select held 0.5 s (`hold_ms`), or the keyboard key `reset_keys` (default `R`). While driving it keeps a
+  ring of "good" poses (all four wheels on asphalt, up vector z > 0.9, faster than 5 m/s, yaw rate <= 0.6 rad/s, velocity within ~25 deg of
+  the heading; one every 15 steps); the reset restores the newest pose at least `rewind_ms` (2500) old, zeroes velocity, speed and all
+  rotation rates (the car restarts from rest) and ignores further presses for `cooldown_ms` (1000). Nothing happens when no good pose
+  exists yet. The ring is emptied when the car jumps more than 15 m in a step (a respawn, a new attempt), after 2 s without steps (the mod
+  was switched off in F9, a long pause) and on a new car; poses older than 8 s are never restored. Allowed everywhere (Time Trial
+  included); only the live player car, never a replay. Disabled by default; toggles live from the F9 menu.
+  **Select and the camera:** the game uses Select to change the view, so while racing the mod hides a held Select from the game; a press
+  shorter than `hold_ms` is replayed as a tap on release (the camera view still changes), a longer one resets and the view does not change.
+  Outside a race (menus, pause) Select is untouched. **Known limits:** gear, rpm and the previous-position fields are not restored (not
+  located; the automatic gearbox relaunches fine from rest, the in-game check requires > 15 m/s with the throttle held after a reset);
+  lap counter and timer are not rewound (measured on a mid-lap reset: HUD 0'24.000 -> 0'27.000 over 3 s of play, lap 1/2 unchanged), and a reset that crosses the start/finish line was not tested (no route completes a lap) and may
+  count the lap twice; a Time Trial ghost / replay recording will show the jump (untested); no track geometry is used, the car goes back
+  where it was, not to the nearest asphalt. `GT_MOD_RESET_FAKE=<step>` holds the button from that player-car step (a debugging aid); `GT_MOD_RESET_LOG=1` logs the car's state (used by `tools/mod_reset_check.sh`).
+- `cheats` - race-time cheats as rows of the F9 menu (keyboard or pad): slow motion (0.5x / 0.25x, player and AI cars) and freeze AI. Needs mod API v2
+  (`api = 2`). Disabled by default and both cheats start off. See `cheats/README.md`; check: `tools/mod_cheats_check.sh` in the host repo.
+- `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees). Hooks the flag reader
+  `0x0894CCB8` (a dormant switch) to lift the clamp and adds a roll rate on a hard side impact (a lateral velocity change above `threshold`
+  in one physics step; `gain`, `cap`, `style = realistic|arcade` in `mod.toml`); the dormant flip state machine the flag would also wake
+  (the car sinks through the road and pops back up) is kept asleep. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
+  See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
 
-## Compilación
+## Build
 
-Necesita una copia (*checkout*) de `gran-turismo-decomp` para la cabecera del SDK (por defecto `../gran-turismo-decomp/include`):
+Needs a `gran-turismo-decomp` checkout for the SDK header (default `../gran-turismo-decomp/include`):
 
 ```bash
 cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ [-DGT_SDK_DIR=/path/to/gran-turismo-decomp/include]
@@ -78,28 +77,28 @@ cmake --build build -j4
 ctest --test-dir build
 ```
 
-## Instalación
+## Install
 
-Copia el directorio del mod (`analog-pedals/` con su `mod.toml` y la `libanalog_pedals.so` compilada, de
-`build/analog-pedals/`) en el directorio de mods del juego (`<build>/mods/` junto a `gt_play`, o `GT_MODS_DIR`) y pon
-`enabled = true` en `mod.toml`. `gt_play` imprime `[mods] loaded: ...` al arrancar. Ejecuta la comprobación en el juego desde la copia de
-gran-turismo-decomp: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh` / `tools/mod_rollover_check.sh`.
+Copy the mod directory (`analog-pedals/` with its `mod.toml` and the built `libanalog_pedals.so` from
+`build/analog-pedals/`) into the game's mods directory (`<build>/mods/` next to `gt_play`, or `GT_MODS_DIR`) and set
+`enabled = true` in `mod.toml`. `gt_play` prints `[mods] loaded: ...` at start. Run the in-game check from the
+gran-turismo-decomp checkout: `tools/mod_pedals_check.sh` / `tools/mod_camera_check.sh` / `tools/mod_reset_check.sh` / `tools/mod_rollover_check.sh`.
 
-## Publicaciones (*releases*)
+## Releases
 
-Una publicación es una etiqueta de git; la CI (`.github/workflows/release.yml`) compila todos los mods contra el `include/` fijado de `gran-turismo-decomp`
-(SHA del commit en el `SDK_REF` del workflow), ejecuta los tests de las herramientas, empaqueta los archivos y los sube junto con `index.json`:
+A release is a git tag; CI (`.github/workflows/release.yml`) builds every mod against the pinned `gran-turismo-decomp`
+`include/` (commit SHA in the workflow's `SDK_REF`), runs the tool tests, packs the archives and uploads them with `index.json`:
 
 ```bash
 git tag vYYYY.MM.DD        # a second release the same day: vYYYY.MM.DD.1
 git push origin vYYYY.MM.DD
 ```
 
-Ejecuta el workflow a mano (Actions -> release -> Run workflow) para una prueba en seco: compila y empaqueta pero no sube nada
-(los archivos quedan como el artefacto de workflow `release-dry-run`). Sube `version` en el `mod.toml` de un mod (`x.y.z`) cuando el mod cambie;
-el índice lista lo que diga el commit etiquetado.
+Run the workflow by hand (Actions -> release -> Run workflow) for a dry run: it builds and packs but uploads nothing
+(the files stay as the `release-dry-run` workflow artifact). Bump `version` in a mod's `mod.toml` (`x.y.z`) when the mod changes;
+the index lists whatever the tagged commit says.
 
-En local, los mismos archivos (necesita una compilación en `build/`):
+Locally, the same files (needs a build in `build/`):
 
 ```bash
 python3 tools/make_index.py --build-dir build --platform linux-x86_64 \
@@ -107,9 +106,9 @@ python3 tools/make_index.py --build-dir build --platform linux-x86_64 \
 python3 -m pytest tests --cov=tools --cov-fail-under=80
 ```
 
-La salida es determinista (entradas de tar ordenadas, mtime/uid/gid fijos, mtime de gzip 0): las mismas entradas dan archivos idénticos byte a byte.
-Cada mod se convierte en `<id>-<version>-<platform>.tar.gz` con una carpeta `<id>/` que contiene `mod.toml` y la biblioteca; descomprímelo en el
-directorio de mods del juego. Las descripciones de una línea de cada mod están en `tools/descriptions.toml` (el lector de `mod.toml` del host rechaza las claves desconocidas).
+The output is deterministic (sorted tar entries, fixed mtime/uid/gid, gzip mtime 0): the same inputs give byte-identical files.
+Each mod becomes `<id>-<version>-<platform>.tar.gz` holding a folder `<id>/` with `mod.toml` and the library; unpack it into the
+game's mods directory. One-line mod descriptions live in `tools/descriptions.toml` (the host's `mod.toml` reader rejects unknown keys).
 
 ### `index.json`
 
@@ -135,6 +134,6 @@ directorio de mods del juego. Las descripciones de una línea de cada mod están
 }
 ```
 
-## Licencia
+## Licence
 
-MIT, véase `LICENSE`.
+MIT, see `LICENSE`.
