@@ -112,6 +112,7 @@ void Resetter::lose_car() {
 
 std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current, bool button_held, std::uint32_t hint0, std::uint32_t hint1) {
     ++now_;
+    refused_ = false;
     if (have_prev_ && std::hypot(std::hypot(current.v[0] - prev_pos_[0], current.v[1] - prev_pos_[1]), current.v[2] - prev_pos_[2]) > kJumpMeters)
         clear_ring();  // not our own restore (that updates prev_pos_): a respawn, a new attempt, a long gap
     prev_pos_[0] = current.v[0]; prev_pos_[1] = current.v[1]; prev_pos_[2] = current.v[2];
@@ -126,7 +127,10 @@ std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current,
     if (!press) return std::nullopt;
     if (last_reset_ >= 0 && now_ - last_reset_ < cooldown_steps_) return std::nullopt;
     const Pose *pick = ring_.pick(now_, sabotage_newest ? 0 : rewind_steps_, sabotage_newest ? (1 << 30) : kMaxPoseAgeSteps);
-    if (pick == nullptr) return std::nullopt;
+    if (pick == nullptr) {
+        refused_ = true;
+        return std::nullopt;
+    }
     const Pose restored = *pick;
     clear_ring();
     ring_.push(now_, restored);  // a second press right after goes back to the same place

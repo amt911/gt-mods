@@ -78,7 +78,12 @@ unsigned g_restores = 0;
 int g_sabotage = 0;
 std::uint32_t g_scratch = 0;     // private guest block for the road query's record (0 = not allocated yet)
 bool g_scratch_failed = false;
+bool g_quiet = false;  // GT_MOD_RESET_QUIET=1 (check builds): no road queries, every good pose is eligible. The game's road query is not frame-neutral (a run with
+                       // the queries diverges from the stock game within a few thousand steps, chaotically), so the in-game check's byte-identity run uses this
 bool g_qlog = false;  // GT_MOD_RESET_QLOG=1: one AHEADQ line per road query (debugging)
+std::uint64_t g_ticks = 0;            // vblank ticks seen (counted here: no host call)
+std::uint64_t g_last_step_vblank = 0;  // g_ticks at the last player-car step: the tick queries only while steps keep arriving
+constexpr std::uint64_t kStaleVblanks = 20;
 float g_ahead_m = reset::kAheadMeters;
 unsigned g_ahead_checked = 0, g_ahead_rejected = 0;
 
@@ -182,9 +187,10 @@ void on_pad_read(GtModCtx *c) {
     }
 }
 
-void on_step(GtModCtx *c) {
+void step_body(GtModCtx *c, bool *called) {
     const GtModApi &a = *g_api;
     g_reads_since_step = 0;
+    g_last_step_vblank = g_ticks;
     const auto now = std::chrono::steady_clock::now();
     if (g_last_step_wall.time_since_epoch().count() != 0 && std::chrono::duration<double>(now - g_last_step_wall).count() > kWallGapSeconds)
         g_resetter->invalidate();
@@ -197,6 +203,7 @@ void on_step(GtModCtx *c) {
         g_car_steps = 0;
         g_steps_atomic = 0;
         g_since_restore = 0;
+        *called = true;
         a.call_original(c);
         return;
     }
@@ -219,12 +226,34 @@ void on_step(GtModCtx *c) {
             a.log(g_self, line);
         }
     }
+    if (g_resetter->refused()) {  // the player pressed the button and no pose is eligible (none with straight asphalt ahead, or none yet)
+        char line[120];
+        std::snprintf(line, sizeof line, "NOPOSE step=%u: no pose with %.0f m of asphalt ahead in the ring (%zu poses), nothing restored", g_car_steps, static_cast<double>(g_ahead_m), g_resetter->recorded());
+        a.log(g_self, line);
+    }
     if (pose) g_since_restore = 1;  // t = 0 at the restore step
     else if (g_since_restore != 0) ++g_since_restore;
+    *called = true;
     a.call_original(c);
     if (g_log) {
         const bool window = g_since_restore != 0 && g_since_restore <= kLogWindow;
         if ((window && g_since_restore % 5 == 1) || (!window && g_car_steps % 30 == 0)) log_state(c, car, body);
+    }
+}
+
+// A read outside PSP RAM throws (psprecomp::Error: a stale car pointer once a race is over); an exception out of a hook would abort the game,
+// so it counts as "no player car" and the original step still runs exactly once.
+void on_step(GtModCtx *c) {
+    bool called = false;
+    try {
+        step_body(c, &called);
+    } catch (...) {
+        g_resetter->lose_car();
+        g_car = 0;
+        g_car_steps = 0;
+        g_steps_atomic = 0;
+        g_since_restore = 0;
+        if (!called) g_api->call_original(c);
     }
 }
 
@@ -247,16 +276,21 @@ bool ensure_scratch(GtModCtx *c) {
 }
 
 // Vblank tick (API 2): runs the look-ahead rule on the poses the step hook queued and hands the passing ones to the ring.
-void on_tick(GtModCtx *c) {
+void tick_body(GtModCtx *c) {
+    ++g_ticks;
     if (!g_resetter) return;
     if (g_car == 0) return;
     const GtModApi &a = *g_api;
+    if (g_ticks > g_last_step_vblank + kStaleVblanks) {  // no step for a while (race over, paused, mod was off): the car pointer may be stale
+        (void)g_resetter->take_pending();  // those poses are old: the ring would be stale too
+        return;
+    }
     std::vector<reset::Resetter::Candidate> pending = g_resetter->take_pending();
     if (pending.empty()) return;
     const std::uint32_t car = g_car, body = a.read32(c, car + kBody);
     const std::uint32_t roadobj = a.read32(c, a.read32(c, car) + kRoadObjVtable);
     const std::uint32_t fn = roadobj != 0 ? a.read32(c, a.read32(c, roadobj) + kRoadQuerySlot) : 0;
-    const bool can_query = body != 0 && fn != 0 && ensure_scratch(c);
+    const bool can_query = !g_quiet && body != 0 && fn != 0 && ensure_scratch(c);
     float start_z = 0.0f;  // the candidate pose's height (the query is a ray down from 2 m above it)
     std::uint32_t hint0 = 0, hint1 = 0;  // where the query starts searching: the pose's own words, then those of the last hit (as the game walks along the road)
     const reset::RoadQuery query = [&](float x, float y, reset::RoadPoint *out) {
@@ -291,7 +325,7 @@ void on_tick(GtModCtx *c) {
         start_z = p.v[2];
         hint0 = cand.hint0;
         hint1 = cand.hint1;
-        const bool ok = g_sabotage == 5 || (can_query && reset::ahead_on_asphalt(query, p.v[0], p.v[1], p.v[2], p.v[14], g_ahead_m));
+        const bool ok = g_sabotage == 5 || g_quiet || (can_query && reset::ahead_on_asphalt(query, p.v[0], p.v[1], p.v[2], p.v[14], g_ahead_m));
         if (ok) g_resetter->accept(cand);
         else ++g_ahead_rejected;
         if (g_log) {
@@ -299,6 +333,15 @@ void on_tick(GtModCtx *c) {
             std::snprintf(line, sizeof line, "AHEAD step=%lld pos=%.2f,%.2f yaw=%.3f ok=%d checked=%u rejected=%u", static_cast<long long>(cand.step), p.v[0], p.v[1], p.v[14], ok ? 1 : 0, g_ahead_checked, g_ahead_rejected);
             a.log(g_self, line);
         }
+    }
+}
+
+void on_tick(GtModCtx *c) {
+    try {
+        tick_body(c);
+    } catch (...) {  // a stale car pointer (the race is over): nothing to check
+        if (g_resetter) g_resetter->lose_car();
+        g_car = 0;
     }
 }
 
@@ -319,6 +362,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     g_fake = reset::parse_fake(std::getenv("GT_MOD_RESET_FAKE"));
     const char *log = std::getenv("GT_MOD_RESET_LOG");
     g_qlog = std::getenv("GT_MOD_RESET_QLOG") != nullptr;
+    g_quiet = std::getenv("GT_MOD_RESET_QUIET") != nullptr;
     g_log = log != nullptr && *log != '\0' && std::string(log) != "0";
     g_resetter->set_deferred(true);
     if (api->on_vblank(self, on_tick) != 0) return 1;

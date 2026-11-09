@@ -395,6 +395,20 @@ static void deferred_restore_picks_an_accepted_pose() {
     for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(100.0f), true)) out = r;
     assert(out && out->v[0] <= 59.0f);  // only an accepted pose: the newest one (x < 60) at least 60 steps old, else the oldest
 }
+static void a_press_with_nothing_eligible_is_refused_and_says_so() {
+    Resetter rs(steps_settings());
+    rs.set_deferred(true);
+    std::optional<Pose> out;
+    bool refused = false;
+    for (int i = 0; i < 100; ++i) rs.step(good_sample(), pose_at(float(i)), false);
+    for (int i = 0; i < 12; ++i) {
+        if (auto r = rs.step(good_sample(), pose_at(100.0f + i), true)) out = r;
+        refused = refused || rs.refused();
+    }
+    assert(!out && refused);  // nothing was accepted by the tick
+    rs.step(good_sample(), pose_at(112.0f), false);
+    assert(!rs.refused());  // only the call with the press says so
+}
 static void pending_is_bounded() {
     Resetter rs(steps_settings());
     rs.set_deferred(true);
@@ -439,6 +453,7 @@ int main() {
     a_cleared_ring_drops_candidates_of_the_old_epoch();
     deferred_restore_picks_an_accepted_pose();
     pending_is_bounded();
+    a_press_with_nothing_eligible_is_refused_and_says_so();
     fake_parsing();
     fake_held_window();
     std::puts("reset_test: all passed");

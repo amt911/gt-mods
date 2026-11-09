@@ -116,6 +116,7 @@ class Resetter {
     std::optional<Pose> step(const CarSample &sample, const Pose &current, bool button_held, std::uint32_t hint0 = 0, std::uint32_t hint1 = 0);
     void lose_car();  // no player car (menu, replay, new race): forget everything
     std::size_t recorded() const { return ring_.size(); }
+    bool refused() const { return refused_; }  // the last step() call had a button press (past the cooldown) and no pose to restore
     void invalidate() { clear_ring(); have_prev_ = false; }  // something moved the car or paused the game for long: the ring is stale
 
     // Deferred mode (API v2): a good pose does not enter the ring at once; it waits in a queue until the vblank tick has run the
@@ -137,6 +138,7 @@ class Resetter {
     HoldDetector hold_;
     PoseRing ring_;
     bool deferred_ = false;
+    bool refused_ = false;
     std::uint32_t epoch_ = 0;  // bumped whenever the ring is cleared: queued candidates of an older epoch are stale
     std::vector<Candidate> pending_;
     void clear_ring() { ring_.clear(); pending_.clear(); ++epoch_; }
