@@ -33,6 +33,13 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     read_setting(get, warn, "threshold", 0.1f, 50.0f, &s.threshold);
     read_setting(get, warn, "gain", 0.0f, 50.0f, &s.gain);
     read_setting(get, warn, "cap", 0.0f, 30.0f, &s.cap);
+    read_setting(get, warn, "box_height", 0.5f, 3.0f, &s.box_height);
+    read_setting(get, warn, "box_kick_cap", 0.1f, 20.0f, &s.box_kick_cap);
+    if (const char *box = get("body_box")) {
+        if (std::strcmp(box, "true") == 0) s.body_box = true;
+        else if (std::strcmp(box, "false") == 0) s.body_box = false;
+        else warn(std::string("invalid body_box = \"") + box + "\" (true or false), keeping true");
+    }
     if (const char *style = get("style")) {
         if (std::strcmp(style, "realistic") == 0) s.style = Style::Realistic;
         else if (std::strcmp(style, "arcade") == 0) s.style = Style::Arcade;

@@ -1,6 +1,6 @@
 id = "rollover"
 name = "Rollovers"
-version = "0.1.0"
+version = "0.2.0"
 library = "librollover.so"
 api = 1
 enabled = false
@@ -14,3 +14,9 @@ threshold = 3.0
 gain = 2.5
 # largest roll rate (rad/s) the mod ever asks for
 cap = 12.0
+# body collision: a box around the car stops the roof and sides sinking into the road while the car tumbles (untouched while upright)
+body_box = true
+# height of the box's roof above the car's origin (m); the game has no body height, 0.8 puts the roof about 1.2 m over the road, a heuristic
+box_height = 0.8
+# largest speed (m/s) away from the ground the car keeps in a step where its body touches it: limits the hop of a spinning car
+box_kick_cap = 0.5

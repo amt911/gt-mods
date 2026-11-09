@@ -23,6 +23,22 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
    is undone by the springs). Normal driving changes the lateral velocity by ~0.2 m/s per step: nothing happens. A jump of the car (> 3 m in
    a step: reset-to-track, a respawn) or of its velocity (> 60 m/s) is not an impact and drops what was being held.
 
+4. **The body box (0.2.0).** The game has no body collision: only the wheels touch the road, so a car on its roof sank 0.5-1.3 m into it
+   (measured: the deepest of the box's 8 corners 1.02 m below the ground). The mod puts a box around the player's car (length 0.8 x wheelbase
+   clamped to 1.7-2.6 m, width track/2 + 0.12 clamped, floor at -0.03 m and roof at `box_height` above the body origin, centred on the axle midpoint;
+   the game has no body dimensions, so these are a heuristic) and pushes it out of the ground: the 4 roof corners always, the 4 floor corners only
+   once the car is tilted past ~40 degrees (upright, the wheels own the contact). The ground is the game's own road query result, read from the four
+   wheel contact records (`word(car+0x10) + 0x38*i`: `+0x00` x, `+0x08` -y, `+0x0C` ground height; byte `+0x2C` = 1 means no road under that wheel and the
+   record is skipped; off-track terrain has a height and is used), a plane fitted while the car is upright and kept while it tumbles. The response is a
+   soft sequential impulse per penetrating corner (friction 0.55, restitution only above 2 m/s of approach) plus a position push; **in a step where the
+   body touches the ground** the car's speed away from it is capped (`box_kick_cap`), otherwise the roof corners of a spinning car hop it 2.5 m up.
+   **Nothing is written unless a corner penetrates**: before the first impact the in-game check compares every state line with a run with
+   `body_box = false` (byte-identical). Limits: the origin rises to 1.43 m in the tumble (stock 0.64 m, where the roof simply sinks into the road; a box rolling
+   over its roof edge puts the origin at the half-diagonal of its cross-section, 1.17 m); the car then **stays on its roof** until reset-to-track (without the box
+   the stock tumble rights itself and the car drives on; with the cap removed the car also rights itself but hops 2.5 m and sinks 0.75 m); the pitch (`+0x6F0`)
+   and yaw (`+0x6F8`) rates are read and written with assumed axes and signs (not established, see `docs/FACTS.md` "Rollover body box" in the host repo: removing those two
+   writes made the hop 2.57 m). Walls and barriers are not handled (no geometry found for them), nor other cars.
+
 ## Settings (`mod.toml`)
 
 | key | default | meaning |
@@ -31,6 +47,9 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
 | `threshold` | `3.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
 | `gain` | `2.5` | roll rate (rad/s) per m/s above the threshold (0 - 50) |
 | `cap` | `12.0` | largest roll rate (rad/s) the mod asks for (0 - 30) |
+| `body_box` | `true` | the body box on or off (`false` = the stock tumble, the roof sinks into the road) |
+| `box_height` | `0.8` | the box's roof above the car's origin (m, 0.5 - 3) |
+| `box_kick_cap` | `0.5` | largest speed (m/s) away from the ground the car keeps in a step where its body touches it (0.1 - 20) |
 
 An invalid value is logged and the default is used. Reference points (measured on the `rollover` pad route): the barrier at the end of the
 straight at ~38 m/s gives ~8.3 m/s of lateral change (rate 12, a tumble past upside down); the car lands, the springs bring it back and

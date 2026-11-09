@@ -67,7 +67,7 @@ Nothing game-derived lives here: only hand-written mod code.
 - `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees). Hooks the flag reader
   `0x0894CCB8` (a dormant switch) to lift the clamp and adds a roll rate on a hard side impact (a lateral velocity change above `threshold`
   in one physics step; `gain`, `cap`, `style = realistic|arcade` in `mod.toml`); the dormant flip state machine the flag would also wake
-  (the car sinks through the road and pops back up) is kept asleep. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
+  (the car sinks through the road and pops back up) is kept asleep. A body box (`body_box`, on by default, 0.2.0) stops the tumbling car's roof and sides sinking into the road. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
   See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
 
 ## Build

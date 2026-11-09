@@ -38,6 +38,16 @@ static void settings_defaults_and_invalid() {
     assert(w.size() == 2 && s.threshold == 3.0f);
 }
 
+static void body_box_settings() {
+    std::vector<std::string> w;
+    Settings d = parse({}, &w);
+    assert(w.empty() && d.body_box && d.box_height == 0.8f && d.box_kick_cap == 0.5f);  // the box is on by default
+    Settings s = parse({{"body_box", "false"}, {"box_height", "1.3"}, {"box_kick_cap", "2"}}, &w);
+    assert(w.empty() && !s.body_box && s.box_height == 1.3f && s.box_kick_cap == 2.0f);
+    s = parse({{"body_box", "maybe"}, {"box_height", "9"}, {"box_kick_cap", "0.05"}}, &w);
+    assert(w.size() == 3 && s.body_box && s.box_height == 0.8f && s.box_kick_cap == 0.5f);  // invalid: defaults kept, one warning each
+}
+
 static void style_changes_threshold_and_gain() {
     Settings s = base();
     assert(near(effective_threshold(s), 3.0f) && near(effective_gain(s), 2.0f));
@@ -189,6 +199,7 @@ static void apply_rate_rules() {
 
 int main() {
     settings_defaults_and_invalid();
+    body_box_settings();
     style_changes_threshold_and_gain();
     roll_rate_threshold_and_cap();
     tracker_ignores_normal_driving();
