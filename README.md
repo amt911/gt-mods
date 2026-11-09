@@ -1,6 +1,6 @@
 # gt-mods
 
-> Main project: [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp) · online decompilation map: <https://claude.ai/artifact/V93Bh8ZWDTAUGfWaoZa5hq>
+> Main project: [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp) · online decompilation map: <https://amt911.github.io/gran-turismo-decomp/progress/>
 
 Native mods for the PC build of the Gran Turismo (PSP) decompilation,
 [gran-turismo-decomp](https://github.com/amt911/gran-turismo-decomp). Each mod is a shared library plus a
