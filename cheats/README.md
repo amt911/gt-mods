@@ -1,44 +1,44 @@
 # cheats
 
-Trucos para carrera de Gran Turismo PSP, como filas del menú de mods F9 (teclado o mando): **cámara lenta** (0.5x / 0.25x, el coche del jugador y los coches de la IA)
-y **congelar la IA** (los coches de la IA se saltan su paso de física). Opt-in doble: el mod se entrega con `enabled = false`, y una vez activado ambos trucos empiezan desactivados.
-Necesita la API de mods v2 (`api = 2`: `add_menu_row`); el `docs/MODS.md` del repositorio del host describe la API y el menú del mando (combinación SELECT+START).
+Race-time cheats for Gran Turismo PSP, as rows of the F9 mod menu (keyboard or pad): **slow motion** (0.5x / 0.25x, the player's car and the AI cars)
+and **freeze AI** (AI cars skip their physics step). Opt-in twice: the mod ships `enabled = false`, and with it on both cheats start off.
+Needs mod API v2 (`api = 2`: `add_menu_row`); the host repo's `docs/MODS.md` has the API and the pad menu (chord SELECT+START).
 
-## Uso
+## Use
 
-F9 (o la combinación del mando SELECT+START) abre la página MODS: tras las filas propias de los mods aparecen `Slow motion  OFF|0.5x|0.25x` y `Freeze AI  OFF|ON`.
-Derecha / Enter avanzan, Izquierda retrocede (mando: cruceta derecha / cruz, cruceta izquierda). Ambos solo actúan en una carrera en vivo (exactamente un coche humano, nunca una repetición);
-fuera de una no se toca nada. Desactivar el mod en F9 lo detiene todo al instante (el host pasa el hook directamente al juego).
+F9 (or the pad chord SELECT+START) opens the MODS page: after the mods' own rows come `Slow motion  OFF|0.5x|0.25x` and `Freeze AI  OFF|ON`.
+Right / Enter step forward, Left back (pad: D-pad right / cross, D-pad left). Both act only in a live race (exactly one human car, never a replay);
+outside one nothing is touched. Turning the mod off in F9 stops everything at once (the host passes the hook straight to the game).
 
-## Cómo funciona
+## How
 
-`0x0894DD9C(world)` avanza cada coche una vez por paso de física. Con `--decomp off` la unidad recompilada ejecuta el cuerpo de esa función **después** de que el hook
-retorne, así que ahí un hook no puede leer "el estado tras el paso". El mod trabaja en la siguiente llamada: a su entrada el estado de cada coche es el resultado
-completo del paso anterior, y el mod reescribe `base + f * (state - base)` sobre los campos cinemáticos (posición, filas de la base, rapidez, velocidad, velocidades angulares,
-ángulos de Euler), donde `base` es lo que dejó tras la llamada anterior. El método de Euler explícito es lineal en dt, así que esto es la misma física a una fracción del reloj:
-las velocidades también cambian `f` veces más despacio (un simple multiplicador de velocidad frenaría el coche en su lugar). `f` = 0.5 / 0.25 para la cámara lenta, 0 para un coche
-de la IA mientras la IA está congelada (conserva su rapidez y sigue desde ella cuando desactivas el truco). Con `f = 1` no se escribe nada: con el mod activado e inactivo
-se obtienen fotogramas idénticos byte a byte a no tener el mod (la comprobación en el juego lo demuestra). Los ángulos de Euler toman el camino corto en su salto de +-pi, las filas de la base
-se reortonormalizan, un coche que se movió más de 8 m entre dos llamadas (reset-to-track, una reaparición) se deja en paz, y las bases se reinician tras 8 vblanks
-sin llamada (el contador del propio juego, `vblank_index`).
+`0x0894DD9C(world)` steps every car once per physics step. With `--decomp off` the recompiled unit runs the body of that function **after** the hook
+returns, so a hook cannot read "the state after the step" there. The mod works on the next call instead: at its entry each car's state is the previous
+step's full result, and the mod writes back `base + f * (state - base)` over the kinematic fields (position, basis rows, speed, velocity, angular rates,
+Euler angles), where `base` is what it left after the previous call. Explicit Euler is linear in dt, so this is the same physics at a fraction of the clock:
+velocities change `f` times as slowly as well (a plain velocity multiplier would brake the car instead). `f` = 0.5 / 0.25 for slow motion, 0 for an AI
+car while AI is frozen (it keeps its speed and goes on from it when you turn the cheat off). With `f = 1` nothing is written: the mod on and idle gives
+frames byte-identical to no mod (the in-game check proves it). The Euler angles go the short way round their +-pi wrap, the basis rows are
+re-orthonormalised, a car that moved more than 8 m between two calls (reset-to-track, a respawn) is left alone, and the bases restart after 8 vblanks
+without a call (the game's own count, `vblank_index`).
 
-Por qué no saltarse pasos enteros (que un paso del mundo de cada dos no se ejecute): el juego avanza a ~30 Hz, así que 0.25x dibujaría 7 pasos por segundo. Por qué no escalar
-un paso de tiempo: el paso del mundo no recibe dt (su llamador pasa uno, `0x0894DD9C` lo ignora: paso fijo).
+Why not skip whole steps (every other world step does not run): the game steps at ~30 Hz, so 0.25x would draw 7 steps per second. Why not scale a
+time step: the world step takes no dt (its caller passes one, `0x0894DD9C` ignores it: fixed step).
 
-## Límites
+## Limits
 
-- **No se ralentizan:** los relojes del juego (cronómetro de la carrera, contador de vueltas, cuenta atrás), el estado propio de los pilotos de la IA (el piloto de un coche de la IA congelado sigue funcionando contra un coche
-  que no se mueve), el estado de neumáticos y motor fuera del cuerpo (giro de ruedas, rpm), el sonido y la cámara. Las colisiones durante la cámara lenta se resuelven en más pasos.
-- La imagen dibujada entre dos llamadas muestra cada coche un paso completo por delante de la base del mod: una ventaja constante, así que el movimiento en pantalla es `f` veces más rápido.
-- Un fantasma de contrarreloj puede tratarse como un coche de la IA (ralentizado o congelado); sin probar, igual que
-   dos jugadores humanos (el mod entonces no hace nada) y las repeticiones (ignoradas a propósito).
+- **Not slowed:** the game's clocks (race timer, lap counter, countdown), the AI drivers' own state (a frozen AI car's driver keeps running against a car
+  that does not move), tyre and engine state outside the body (wheel spin, rpm), sound and camera. Collisions during slow motion resolve over more steps.
+- The picture drawn between two calls shows each car one full step ahead of the mod's base: a constant lead, so the motion on screen is `f` times as fast.
+- A Time Trial ghost may be treated like an AI car (slowed or frozen); untested, as are
+   two human players (the mod then does nothing), replays (ignored on purpose).
 
-## Ajustes (`mod.toml`)
+## Settings (`mod.toml`)
 
-| clave | por defecto | significado |
+| key | default | meaning |
 | --- | --- | --- |
-| `slow_motion` | `"off"` | estado inicial: `off`, `0.5` o `0.25` |
-| `freeze_ai` | `false` | estado inicial |
+| `slow_motion` | `"off"` | initial state: `off`, `0.5` or `0.25` |
+| `freeze_ai` | `false` | initial state |
 
-Ayudas de depuración que usa la comprobación en el juego (`tools/mod_cheats_check.sh` en el repositorio del host): `GT_MOD_CHEATS_SLOWMO=<off|0.5|0.25>`, `GT_MOD_CHEATS_FREEZE_AI=1`,
+Debugging aids used by the in-game check (`tools/mod_cheats_check.sh` in the host repo): `GT_MOD_CHEATS_SLOWMO=<off|0.5|0.25>`, `GT_MOD_CHEATS_FREEZE_AI=1`,
 `GT_MOD_CHEATS_FROM=<player-car step>`, `GT_MOD_CHEATS_LOG=1` (+ `GT_MOD_CHEATS_LOG_EVERY=<steps>`): `[mod:cheats] st=<step> slow=.. freeze=.. P=<player pos> spd acc A<i>=<AI pos>`.
