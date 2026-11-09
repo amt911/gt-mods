@@ -30,8 +30,10 @@
 // mods_together_check); GT_MOD_ROLLOVER_LOG=1 logs the car's state (see log_state).
 #include "gt_mod/gt_mod_api.h"
 
+#include "bodybox.hpp"
 #include "rollover_logic.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -155,6 +157,127 @@ void on_flag_read(GtModCtx *c) {
     if (lift) g_api->set_gpr(c, 2, 1);
 }
 
+// ---- body box (0.2.0): the car's body against the ground while it tumbles --------------------------------------------------------------
+// The game has no body collision: a rolling car's roof sinks 0.5-1.3 m into the road (the wheels are its only contact). A box around the
+// body (bodybox.hpp; 4 roof corners always, the 4 floor corners only past ~40 deg of tilt, so an upright car is untouched) is pushed out of
+// the ground. The ground comes from the game's own road query results, the four wheel contact records word(car+0x10) + 0x38*i: float +0x00 x,
+// +0x08 = -y, +0x0C = ground height there, byte +0x2C != 0 = no road under that wheel (the height is then a fallback and is skipped). The
+// heights stay valid while the car is on its roof. Nothing is written unless a corner penetrates, so the car is byte-identical to the stock
+// game until it touches the ground with its body. The box size comes from the same records (wheelbase, track) and the car record
+// word(car+0xC) (+0x40/+0x48 = the axles' offsets from the body origin); the game has no body dimensions, so the length, width and the
+// floor/roof heights are a heuristic (docs/FACTS.md of the host repo, "rollover body box"). Walls are not handled.
+bodybox::Box g_box;
+bodybox::Params g_box_params;
+bool g_box_sized = false;
+float g_gx = 0.0f, g_gy = 0.0f;    // ground slope fitted while the car is upright, kept while it tumbles (the wheel points are not spread then)
+unsigned g_box_steps = 0, g_box_touch_steps = 0, g_box_touch_upright = 0, g_box_tilted_steps = 0;
+float g_box_min_clear = 1e9f, g_box_min_roof = 1e9f;
+
+bodybox::V3 rd3(GtModCtx *c, std::uint32_t at) { const GtModApi &a = *g_api; return {a.readf(c, at), a.readf(c, at + 4), a.readf(c, at + 8)}; }
+
+void reset_box_state() {
+    g_box_sized = false;
+    g_gx = g_gy = 0.0f;
+    g_box_steps = g_box_touch_steps = g_box_touch_upright = g_box_tilted_steps = 0;
+    g_box_min_clear = g_box_min_roof = 1e9f;
+}
+
+// The ground plane under the car; false when no wheel has a road under it.
+bool read_ground(GtModCtx *c, std::uint32_t car, float up_z, bodybox::Ground *g) {
+    const GtModApi &a = *g_api;
+    const std::uint32_t cr = a.read32(c, car + 0x10);
+    if (cr == 0) return false;
+    float xs[4], ys[4], hs[4];
+    int n = 0;
+    for (int i = 0; i < 4; ++i) {
+        const std::uint32_t r = cr + 0x38 * i;
+        if (a.read8(c, r + 0x2C) != 0) continue;
+        xs[n] = a.readf(c, r);
+        ys[n] = -a.readf(c, r + 8);
+        hs[n] = a.readf(c, r + 0xC);
+        if (std::isfinite(xs[n] + ys[n] + hs[n])) ++n;
+    }
+    if (n == 0) return false;
+    float mx = 0, my = 0, mh = 0;
+    for (int i = 0; i < n; ++i) { mx += xs[i]; my += ys[i]; mh += hs[i]; }
+    mx /= n; my /= n; mh /= n;
+    if (n == 4 && up_z > 0.9f) {  // upright: the four wheel points are spread out: fit the slope
+        float sxx = 0, sxy = 0, syy = 0, sxh = 0, syh = 0;
+        for (int i = 0; i < 4; ++i) {
+            const float dx = xs[i] - mx, dy = ys[i] - my, dh = hs[i] - mh;
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy; sxh += dx * dh; syh += dy * dh;
+        }
+        const float det = sxx * syy - sxy * sxy;
+        if (det > 1e-3f) {
+            g_gx = (sxh * syy - syh * sxy) / det;
+            g_gy = (syh * sxx - sxh * sxy) / det;
+        }
+        if (!g_box_sized && up_z > 0.95f) {  // the box size, once, while the car is level
+            const bodybox::V3 w0 = rd3(c, cr), w1 = rd3(c, cr + 0x38), w2 = rd3(c, cr + 0x70), w3 = rd3(c, cr + 0xA8);
+            const float fx = (w0.x + w1.x) / 2 - (w2.x + w3.x) / 2, fy = (w0.z + w1.z) / 2 - (w2.z + w3.z) / 2;  // records are Y-up: x and z are the ground plane
+            const float wheelbase = std::hypot(fx, fy), track = std::hypot(w0.x - w1.x, w0.z - w1.z);
+            g_box.hl = std::min(2.6f, std::max(1.7f, 0.8f * wheelbase));
+            g_box.hw = std::min(1.1f, std::max(0.75f, track / 2 + 0.12f));
+            g_box.cx = 0.0f;
+            if (const std::uint32_t spec = a.read32(c, car + 0xC)) {
+                const float cx = (a.readf(c, spec + 0x40) + a.readf(c, spec + 0x48)) / 2;  // axle midpoint (0.879 and -1.563 on the logged car)
+                if (std::isfinite(cx) && std::fabs(cx) < 1.5f) g_box.cx = cx;
+            }
+            g_box_sized = true;
+            if (g_log) {
+                char line[160];
+                std::snprintf(line, sizeof line, "BOXSIZE wheelbase=%.2f track=%.2f hl=%.2f hw=%.2f zb=%.2f zt=%.2f cx=%.3f", wheelbase, track, g_box.hl, g_box.hw, g_box.zb, g_box.zt, g_box.cx);
+                a.log(g_self, line);
+            }
+        }
+    }
+    g->x0 = mx; g->y0 = my; g->h0 = mh; g->gx = g_gx; g->gy = g_gy;
+    return true;
+}
+
+// One call per physics step, after the roll tracker's write. `apply` false only measures (the log's BOX lines show what the stock game does).
+void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool apply) {
+    const GtModApi &a = *g_api;
+    bodybox::State st;
+    st.p = rd3(c, body + kPos);
+    st.v = rd3(c, body + kVel);
+    st.f = rd3(c, body + kForward); st.l = rd3(c, body + kLateral); st.u = rd3(c, body + kUp);
+    // body rates (docs/FACTS.md): +0x6F4 about the forward axis, +0x6F0 about the lateral one, +0x6F8 about up
+    const float roll = a.readf(c, body + kRollRate), pitch = a.readf(c, body + 0x6F0), yaw = a.readf(c, body + 0x6F8);
+    st.w = st.f * roll + st.l * pitch + st.u * yaw;
+    bodybox::Ground g;
+    if (!read_ground(c, car, st.u.z, &g)) return;
+    ++g_box_steps;
+    const float upn = bodybox::dot(st.u, g.normal());
+    const bodybox::State before = st;
+    const bodybox::Result res = bodybox::resolve(st, g_box, g, g_box_params, apply);
+    g_box_min_clear = std::min(g_box_min_clear, res.min_clear);
+    if (upn < g_box_params.tilt_active_cos) { ++g_box_tilted_steps; g_box_min_roof = std::min(g_box_min_roof, res.min_clear_roof); }
+    if (res.contacts) {
+        ++g_box_touch_steps;
+        if (upn > 0.9f) ++g_box_touch_upright;
+    }
+    if (apply && (res.push > 0.0f || res.dv > 0.0f)) {
+        a.writef(c, body + kPos, st.p.x); a.writef(c, body + kPos + 4, st.p.y); a.writef(c, body + kPos + 8, st.p.z);
+        a.writef(c, body + kVel, st.v.x); a.writef(c, body + kVel + 4, st.v.y); a.writef(c, body + kVel + 8, st.v.z);
+        a.writef(c, body + kRollRate, bodybox::dot(st.w, st.f));
+        a.writef(c, body + 0x6F0, bodybox::dot(st.w, st.l));
+        a.writef(c, body + 0x6F8, bodybox::dot(st.w, st.u));
+    }
+    if (g_log && (upn < 0.9f || res.contacts)) {  // clear = the lowest of the 8 corners above the ground at the start of the step (negative = inside it)
+        char line[300];
+        std::snprintf(line, sizeof line, "BOX st=%u box=%d upn=%.3f z-g=%.3f clear=%.3f roof=%.3f contacts=%d depth=%.3f push=%.3f dv=%.2f vz=%.2f",
+                      g_car_steps, apply ? 1 : 0, upn, before.p.z - g.at(before.p.x, before.p.y), res.min_clear, res.min_clear_roof, res.contacts, res.max_depth, res.push, res.dv, before.v.z);
+        a.log(g_self, line);
+    }
+    if (g_log && g_car_steps % 600 == 0) {
+        char line[240];
+        std::snprintf(line, sizeof line, "BOXSTAT st=%u steps=%u touch=%u touch_upright=%u tilted=%u min_clear=%.3f min_roof_tilted=%.3f", g_car_steps, g_box_steps, g_box_touch_steps,
+                      g_box_touch_upright, g_box_tilted_steps, g_box_min_clear, g_box_min_roof);
+        a.log(g_self, line);
+    }
+}
+
 // Everything that reads the player car. A read outside PSP RAM throws (the host's psprecomp::Error); the world/slot pointers can hold stale
 // values once a race is over, and an exception out of a hook would abort the game, so on_step treats it as "no player car" (defensive: the
 // `--decomp on` abort seen ~12000 steps after the route is in the game's own func_08BD4270, not here; docs/FINDINGS.md).
@@ -164,6 +287,7 @@ void step_body(GtModCtx *c) {
     const std::uint32_t body = car != 0 ? a.read32(c, car + kBody) : 0;
     if (car == 0 || body == 0) {
         if (g_car != 0) g_tracker->reset();
+        reset_box_state();
         g_car = 0;
         g_car_steps = 0;
         g_have_prev_vel = false;
@@ -171,6 +295,7 @@ void step_body(GtModCtx *c) {
     }
     if (car != g_car) {  // a new race: the car's address changed
         g_tracker->reset();
+        reset_box_state();
         g_car = car;
         g_car_steps = 0;
         g_impulses = 0;
@@ -225,6 +350,7 @@ void step_body(GtModCtx *c) {
         const float want = rollover::apply_rate(rate, held * kRollSign, g_settings.cap);
         if (want != rate) a.writef(c, body + kRollRate, want);
     }
+    if (g_settings.body_box || g_log) body_box_step(c, car, body, g_settings.body_box);  // log-only runs measure what the stock game does
     if (g_log && (g_car_steps % 30 == 0 || (g_impulses != 0 && g_since_impulse < 150 && g_car_steps % 3 == 0))) log_state(c, body, held);
 }
 
@@ -248,6 +374,23 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     g_self = self;
     g_settings = rollover::parse_settings([&](const char *k) { return api->config(self, k); }, [&](const std::string &w) { api->log(self, w.c_str()); });
     g_tracker = std::make_unique<rollover::Tracker>(g_settings);
+    g_box.zt = g_settings.box_height;
+    g_box_params.max_up_speed = g_settings.box_kick_cap;
+    if (const char *tune = std::getenv("GT_MOD_ROLLOVER_BOX_TUNE")) {  // measurement aid: "soft=0.25,correct=1,e=0.15,mu=0.55,cap=3,skin=0.01,zt=1.15,zb=-0.03"
+        std::string t = tune;
+        for (std::size_t at = 0; at < t.size();) {
+            const std::size_t end = std::min(t.find(',', at), t.size()), eq = t.find('=', at);
+            if (eq != std::string::npos && eq < end) {
+                const std::string k = t.substr(at, eq - at);
+                const float v = std::strtof(t.substr(eq + 1, end - eq - 1).c_str(), nullptr);
+                if (k == "soft") g_box_params.soft = v; else if (k == "correct") g_box_params.correct = v; else if (k == "e") g_box_params.restitution = v;
+                else if (k == "mu") g_box_params.friction = v; else if (k == "cap") g_box_params.max_up_speed = v; else if (k == "skin") g_box_params.skin = v;
+                else if (k == "zt") g_box.zt = v; else if (k == "zb") g_box.zb = v;
+            }
+            at = end + 1;
+        }
+    }
+    if (g_settings.sabotage == 6) g_settings.body_box = false;  // check build: the box off, the log still measures
     if (const char *log = std::getenv("GT_MOD_ROLLOVER_LOG")) g_log = *log != '\0' && std::string(log) != "0";
     if (const char *fake = std::getenv("GT_MOD_ROLLOVER_FAKE")) {
         float dv = 0.0f;
