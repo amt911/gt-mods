@@ -244,7 +244,7 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
     st.p = rd3(c, body + kPos);
     st.v = rd3(c, body + kVel);
     st.f = rd3(c, body + kForward); st.l = rd3(c, body + kLateral); st.u = rd3(c, body + kUp);
-    // body rates (docs/FACTS.md): +0x6F4 about the forward axis (roll; measured), +0x6F0 / +0x6F8 taken as the lateral / up axes with sign + (assumed, small in a roll tumble: < 1.6 rad/s)
+    // body rates (docs/FACTS.md): +0x6F4 about the forward axis (roll; measured), +0x6F0 / +0x6F8 taken as the lateral / up axes with sign + (assumed: unverified)
     const float roll = a.readf(c, body + kRollRate), pitch = a.readf(c, body + 0x6F0), yaw = a.readf(c, body + 0x6F8);
     st.w = st.f * roll + st.l * pitch + st.u * yaw;
     bodybox::Ground g;
@@ -279,8 +279,10 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
         a.writef(c, body + kPos, st.p.x); a.writef(c, body + kPos + 4, st.p.y); a.writef(c, body + kPos + 8, st.p.z);
         a.writef(c, body + kVel, st.v.x); a.writef(c, body + kVel + 4, st.v.y); a.writef(c, body + kVel + 8, st.v.z);
         a.writef(c, body + kRollRate, bodybox::dot(st.w, st.f));
-        // pitch (+0x6F0) and yaw (+0x6F8) are NOT written back: their mapping to the body axes was not established (docs/FACTS.md, "Rollover body box": the WMEAS fit of
-        // a roll-dominated tumble gives R2 0.73 / 0.37 and no clean axis or sign), so a contact's torque about the lateral and up axes is dropped rather than written with a guessed sign
+        // pitch (+0x6F0) / yaw (+0x6F8) are written back with the assumed axes l / u and sign + (docs/FACTS.md "Rollover body box": the WMEAS fit of a roll-dominated tumble
+        // is inconclusive for them, R2 0.73 / 0.37). Measured: without these two writes the tumble ends with the origin 2.57 m up (launched) instead of 1.43 m
+        a.writef(c, body + 0x6F0, bodybox::dot(st.w, st.l));
+        a.writef(c, body + 0x6F8, bodybox::dot(st.w, st.u));
     }
     if (g_log && (upn < 0.9f || res.contacts)) {  // clear = the lowest of the 8 corners above the ground at the start of the step (negative = inside it)
         char line[300];
