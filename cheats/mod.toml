@@ -1,6 +1,6 @@
 id = "cheats"
 name = "Cheats"
-version = "0.1.0"
+version = "0.2.0"
 library = "libcheats.so"
 api = 2
 enabled = false
