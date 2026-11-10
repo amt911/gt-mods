@@ -1,6 +1,6 @@
 id = "orbit-camera"
 name = "Orbit camera"
-version = "0.1.0"
+version = "0.2.0"
 library = "liborbit_camera.so"
 api = 1
 enabled = false
@@ -12,6 +12,8 @@ smooth_ms = 80
 pitch_deg = "0"
 # GT7: in the bumper, cockpit and near-chase views the stick turns the other way (far chase as the stick says)
 invert_outside_chase = true
+# the far chase (full third-person) view turns the other way too
+invert_in_chase = true
 look_left_keys = "J"
 look_right_keys = "L"
 look_back_keys = "K"

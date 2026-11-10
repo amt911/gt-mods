@@ -45,6 +45,14 @@ constexpr std::uint32_t kEntryReplay = 0xA8, kEntryInput = 0x6C;
 constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010;
 constexpr std::uint32_t kSceneCamera = 0x1FA4, kCameraMatrix = 0x10;
 constexpr std::uint32_t kGuBlock = 0x2E0, kGuProj = 0xD04;
+// The view matrix of a layer: the layer loop of the scene renderer (0x08AF1524) loads, per layer, camera->getView() into the GU with `jal 0x08B568DC` at 0x08AF17A8
+// (a0 = the 4x4 view, row vectors). Sky dome, far hill / cloud layers, track and cars are all layers of that loop and are placed AND culled from
+// the GU view loaded here (matrix argument = the loop's scratch, see kLoopScratch), so orbiting this matrix (instead of the per-object world matrices after the fold) makes them follow the orbited heading.
+constexpr std::uint32_t kGuLoadMatrix = 0x08B568DC, kSceneRenderer = 0x08AF1524;
+// The loop copies every layer's projection and view to the scratch `sp + 0xC0` of its 0x140-byte frame (`08B4E734(sp + 0xC0, ...)`, then `08B568DC(sp + 0xC0)`); the final
+// restore of the saved GU matrices loads `sp + 0x80`. Gating on "argument == the scratch of the latest loop entry" does not need the return address (a decompiled caller does not set it); the identity test below keeps stray matches out.
+constexpr std::uint32_t kLoopFrame = 0x140, kLoopScratch = 0xC0;
+constexpr float kViewBasisTol = 0.25f, kViewTransTol = 8.0f;  // "this view is the player camera's" test (the rear-view mirror pass loads another camera's)
 constexpr std::uint32_t kSceneGlobal = 0x08D11F74;  // log only
 constexpr int kStaleFrames = 10;  // spec: the step ran within the last 10 frames
 
@@ -164,33 +172,55 @@ bool pivot_view(GtModCtx *c, float out[3]) {
     return std::isfinite(out[0]) && std::isfinite(out[1]) && std::isfinite(out[2]);
 }
 
-// 0x08B59210(this = a0, command = a1, data = a2): writes 12 words of a matrix upload (4 rows x 3 floats, float24) into the GE
-// list; a1 = 0x3A is the world matrix. Hooked here and not at 0x08B59508 (the caller): the recompiled 0x08B59508 reaches this
-// function by `ctx.pc = 0x08B59210; return;`, so the runtime runs it after 0x08B59508 returned, i.e. after a hook on 0x08B59508
-// has already restored the matrix. 0x08B59210 is a leaf that reads a2 and returns, so the edit-call-restore is complete here.
+// 0x08B59210(this = a0, command = a1, data = a2) writes a matrix upload into the GE list. It is only used here to count frames (the HUD's orthographic upload comes once per
+// frame, menus and pauses draw it too, so the StepGate is game-paced); the orbit itself is applied to the view matrix when a layer loads it (on_view_load).
 void on_upload(GtModCtx *c) {
     const GtModApi &a = *g_api;
-    // Only the GU context (a0 = 0x08D6CE00, FACTS): other callers of 0x08B59210 pass other objects, whose fields must not be read.
-    if (a.gpr(c, 5) != kWorldCommand || a.gpr(c, 4) != kGuObject) { a.call_original(c); return; }
-    const std::uint32_t wp = a.gpr(c, 6), pp = a.read32(c, a.gpr(c, 4) + kGuBlock + kGuProj);
-    const bool perspective = pp != 0 && orbit::is_perspective(a.readf(c, pp + 4 * 11));
-    if (pp != 0 && !perspective) g_gate.on_frame();  // the HUD's orthographic upload: once per frame, menus and pauses draw it too
-    const float pitch = g_fake ? g_fake->second : g_settings.pitch_deg;
-    if (!perspective || wp == 0 || g_player_car == 0 || !g_gate.live() || !orbit::needs_edit(g_yaw, g_yaw != 0.0f ? pitch : 0.0f)) {
-        a.call_original(c);
-        return;
+    if (a.gpr(c, 5) == kWorldCommand && a.gpr(c, 4) == kGuObject) {
+        const std::uint32_t pp = a.read32(c, a.gpr(c, 4) + kGuBlock + kGuProj);
+        if (pp != 0 && !orbit::is_perspective(a.readf(c, pp + 4 * 11))) g_gate.on_frame();
     }
+    a.call_original(c);
+}
+
+// 0x08B568DC(matrix = a0): loads a matrix into the GU. For the view load of a layer (the loop's scratch matrix, see above) of the PLAYER's camera, rotate it about the pivot:
+// V' = V T(-p) R(yaw) R(pitch) T(p), the same transform the world matrices got, applied before the layer is culled / folded.
+std::uint32_t g_loop_scratch = 0;
+
+// 0x08AF1524(renderer, target): remembers where the layer loop's scratch matrix will live (entry sp - 0x140 + 0xC0). NOT a "while inside" flag: call_original returns before the
+// recompiled loop body has run its calls (measured: the loads arrive with the flag already cleared), so the scratch address of the latest entry is all that is kept.
+void on_scene_render(GtModCtx *c) {
+    g_loop_scratch = g_api->gpr(c, 29) - kLoopFrame + kLoopScratch;
+    g_api->call_original(c);
+}
+
+void on_view_load(GtModCtx *c) {
+    const GtModApi &a = *g_api;
+    const float pitch = g_fake ? g_fake->second : g_settings.pitch_deg;
+    const std::uint32_t cam = g_scene != 0 ? a.read32(c, g_scene + kSceneCamera) : 0;
+    if (g_loop_scratch == 0 || a.gpr(c, 4) != g_loop_scratch || cam == 0 || g_player_car == 0 || !g_gate.live() || !orbit::needs_edit(g_yaw, g_yaw != 0.0f ? pitch : 0.0f)) { a.call_original(c); return; }
     ++g_uploads;
+    const std::uint32_t view = a.gpr(c, 4);
+    float v[16], cm[16];
+    for (int i = 0; i < 16; ++i) { v[i] = a.readf(c, view + 4 * i); cm[i] = a.readf(c, cam + kCameraMatrix + 4 * i); }
+    // is this the player camera's view (basis = transpose of its camera-to-world basis, translation = -eye . R^T)?
+    float basis_err = 0.0f, trans_err = 0.0f;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) basis_err = std::max(basis_err, std::fabs(v[4 * i + j] - cm[4 * j + i]));
+    for (int j = 0; j < 3; ++j) {
+        float e = 0.0f;
+        for (int k = 0; k < 3; ++k) e += cm[12 + k] * cm[4 * j + k];
+        trans_err = std::max(trans_err, std::fabs(v[12 + j] + e));
+    }
+    if (!(basis_err < kViewBasisTol && trans_err < kViewTransTol)) { ++g_rej_flags; a.call_original(c); return; }
     float pv[3];
     if (!pivot_view(c, pv)) { ++g_rej_pivot; a.call_original(c); return; }
     g_last_pivot[0] = pv[0]; g_last_pivot[1] = pv[1]; g_last_pivot[2] = pv[2];
-    float m[16], n[16];
-    for (int i = 0; i < 16; ++i) m[i] = a.readf(c, wp + 4 * i);
-    orbit::orbit_matrix(m, pv, g_yaw, g_yaw != 0.0f ? pitch : 0.0f, n);
+    float n[16];
+    orbit::orbit_matrix(v, pv, g_yaw, g_yaw != 0.0f ? pitch : 0.0f, n);
     ++g_edits;
-    for (int i = 0; i < 16; ++i) a.writef(c, wp + 4 * i, n[i]);
+    for (int i = 0; i < 16; ++i) a.writef(c, view + 4 * i, n[i]);  // the matrix is the renderer's stack temporary
     a.call_original(c);
-    for (int i = 0; i < 16; ++i) a.writef(c, wp + 4 * i, m[i]);
 }
 
 }  // namespace
@@ -208,5 +238,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (api->hook(self, kStep, on_step) != 0) return 1;
     if (api->hook(self, kSceneRefresh, on_scene_refresh) != 0) return 1;
     if (api->hook(self, kUpload, on_upload) != 0) return 1;
+    if (api->hook(self, kSceneRenderer, on_scene_render) != 0) return 1;
+    if (api->hook(self, kGuLoadMatrix, on_view_load) != 0) return 1;
     return 0;
 }

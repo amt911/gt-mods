@@ -14,6 +14,7 @@ struct Settings {
     float smooth_ms = 80.0f;       // time constant of the swing; 0 = instant
     float pitch_deg = 0.0f;        // constant tilt added while orbiting, -45..45
     bool invert_outside_chase = true;  // GT7: outside the chase view (bumper/cockpit/hood) the stick turns the other way
+    bool invert_in_chase = true;       // the far chase view mirrored too (user, 2026-11-08)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
@@ -32,9 +33,9 @@ struct Raw {
 // full back. Back-left and back-right are continuous with the rear view.
 float target_yaw(const Raw &raw, const Settings &s);
 
-// The yaw applied in the current view: `target` in the chase view; mirrored (-target) in the other views when
-// `invert_outside_chase` is set (the user's GT7 behaviour: stick right in the seat views turns the other way). 0 stays 0, 180 stays
-// the rear view.
+// The yaw applied in the current view: mirrored (-target) in the far chase view when `invert_in_chase` is set and in the other views
+// when `invert_outside_chase` is set (the user's GT7 behaviour: stick right turns the other way), otherwise `target`. 0 stays 0, 180
+// stays the rear view.
 float view_yaw(float target, bool chase_view, const Settings &s);
 
 // The full third-person (far chase) view, told by the player car's distance from the eye (`pivot`, view space): ~9.2 there,
