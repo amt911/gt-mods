@@ -97,3 +97,38 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
 }
 
 }  // namespace cheats
+
+namespace cheats {
+
+bool money_cell_valid(std::uint32_t value, std::uint32_t high, std::uint32_t type) {
+    // +8 is 0x00020100 in a new game and 0x01030000 once the game has saved or loaded (host FACTS); anything else: not the cell.
+    return high == 0u && (type == 0x00020100u || type == 0x01030000u) && value <= kMoneyCap;
+}
+
+std::uint32_t money_after(std::uint32_t value, int direction) {
+    constexpr std::uint32_t kStep = 1000000u;
+    if (direction < 0) return value > kStep ? value - kStep : 0u;
+    return value >= kMoneyCap - kStep ? kMoneyCap : value + kStep;
+}
+
+bool backup_save(const std::filesystem::path &savedata, long long stamp, std::string &where, std::string &error) {
+    namespace fs = std::filesystem;
+    const fs::path from = savedata / "UCES01245-GAMEDAT";
+    std::error_code ec;
+    if (!fs::exists(from, ec)) {  // no save yet (a new game): nothing to lose, nothing to copy
+        where.clear();
+        return true;
+    }
+    const fs::path to = savedata.parent_path() / (savedata.filename().string() + "-backups") /
+                        ("UCES01245-GAMEDAT-" + std::to_string(stamp));
+    fs::create_directories(to.parent_path(), ec);
+    fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        error = "backup failed: " + ec.message();
+        return false;
+    }
+    where = to.string();
+    return true;
+}
+
+}  // namespace cheats

@@ -7,6 +7,11 @@ Needs mod API v2 (`api = 2`: `add_menu_row`); the host repo's `docs/MODS.md` has
 ## Use
 
 F9 (or the pad chord SELECT+START) opens the MODS page: after the mods' own rows come `Slow motion  OFF|0.5x|0.25x` and `Freeze AI  OFF|ON`.
+`Money  <balance> Cr +-1M`: Enter or Right adds 1,000,000 Cr, Left takes 1,000,000 away (between 0 and the game's cap,
+999,999,999). The first change of a run copies the save folder to `savedata-backups/UCES01245-GAMEDAT-<time>` next to the
+savedata folder (with no save yet there is nothing to copy). The new balance is kept once the game saves (Options, or any of its
+own saves): measured in game, a +1M then the Options save then a restart showed the new balance (host repo FACTS
+"Money and cars"). The row shows `--` when no game is loaded and refuses to change anything if the backup fails.
 Right / Enter step forward, Left back (pad: D-pad right / cross, D-pad left). Both act only in a live race (exactly one human car, never a replay);
 outside one nothing is touched. Turning the mod off in F9 stops everything at once (the host passes the hook straight to the game).
 

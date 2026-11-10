@@ -66,7 +66,7 @@ Nothing game-derived lives here: only hand-written mod code.
   lap counter and timer are not rewound (measured on a mid-lap reset: HUD 0'24.000 -> 0'27.000 over 3 s of play, lap 1/2 unchanged), and a reset that crosses the start/finish line was not tested (no route completes a lap) and may
   count the lap twice; a Time Trial ghost / replay recording will show the jump (untested); no track geometry is used, the car goes back
   where it was, not to the nearest asphalt. `GT_MOD_RESET_FAKE=<step>` holds the button from that player-car step (a debugging aid); `GT_MOD_RESET_LOG=1` logs the car's state (used by `tools/mod_reset_check.sh`).
-- `cheats` - race-time cheats as rows of the F9 menu (keyboard or pad): slow motion (0.5x / 0.25x, player and AI cars) and freeze AI. Needs mod API v2
+- `cheats` - race-time cheats as rows of the F9 menu (keyboard or pad): slow motion (0.5x / 0.25x, player and AI cars), freeze AI and money (Enter/Right +1,000,000 Cr, Left -1,000,000; the save folder is copied to `savedata-backups/` before the first change; it stays once the game saves). Needs mod API v2
   (`api = 2`). Disabled by default and both cheats start off. See `cheats/README.md`; check: `tools/mod_cheats_check.sh` in the host repo.
 - `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees). Hooks the flag reader
   `0x0894CCB8` (a dormant switch) to lift the clamp and adds a roll rate on a hard side impact (a lateral velocity change above `threshold`

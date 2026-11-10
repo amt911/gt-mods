@@ -1,3 +1,6 @@
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include "cheats_logic.hpp"
 
 #include <cassert>
@@ -130,7 +133,36 @@ static void settings() {
     assert(w.size() == 3 && s.slow == SlowMo::Off && !s.freeze_ai && s.from_step == 0);
 }
 
+void money() {
+    using cheats::money_cell_valid;
+    assert(money_cell_valid(100000u, 0u, 0x00020100u));
+    assert(!money_cell_valid(100000u, 1u, 0x00020100u));          // high word set: not the balance
+    assert(!money_cell_valid(100000u, 0u, 0x00020101u));          // another script value type
+    assert(money_cell_valid(1100000u, 0u, 0x01030000u));          // after the game saved or loaded
+    assert(!money_cell_valid(1000000000u, 0u, 0x00020100u));      // above the game's cap
+    assert(cheats::money_after(100000u, +1) == 1100000u);
+    assert(cheats::money_after(500000u, -1) == 0u);               // never below zero
+    assert(cheats::money_after(999500000u, +1) == 999999999u);    // the game's cap
+    assert(cheats::money_after(42u, 0) == 1000042u);               // Enter adds
+}
+
+void backup() {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "gt_cheats_backup_test";
+    fs::remove_all(root);
+    fs::create_directories(root / "savedata" / "UCES01245-GAMEDAT");
+    std::ofstream(root / "savedata" / "UCES01245-GAMEDAT" / "GAME.DAT") << "save";
+    std::string where, error;
+    assert(cheats::backup_save(root / "savedata", 1234567890ll, where, error));
+    assert(fs::exists(fs::path(where) / "GAME.DAT"));
+    assert(fs::path(where).parent_path() == root / "savedata-backups");  // outside the savedata folder the game scans
+    assert(cheats::backup_save(root / "missing", 1ll, where, error) && where.empty());  // no save yet: nothing to lose
+    fs::remove_all(root);
+}
+
 int main() {
+    money();
+    backup();
     scale_endpoints_are_exact();
     scale_time_dilation_matches_half_the_steps();
     euler_angles_wrap_the_short_way();

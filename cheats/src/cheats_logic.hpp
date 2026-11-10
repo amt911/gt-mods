@@ -2,6 +2,10 @@
 // values in, plain values out, so the unit test can run it.
 #pragma once
 
+#include <cstdint>
+#include <filesystem>
+#include <string>
+
 #include <array>
 #include <functional>
 #include <string>
@@ -48,6 +52,18 @@ struct Settings {
     long from_step = 0;  // the cheats start at this player-car step (check aid; 0 = at once)
     int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing
 };
+// Money (host repo FACTS "Money and cars"): the live balance is the word at 0x08F6AC00 of a script value whose high word is 0 and
+// +8 word 0x00020100 (new game) or 0x01030000 (after a save or load); the game's cap is 999,999,999. Enter/Right add 1,000,000, Left takes it away, clamped to [0, cap].
+constexpr std::uint32_t kMoneyCell = 0x08F6AC00u;
+constexpr std::uint32_t kMoneyCap = 999999999u;
+bool money_cell_valid(std::uint32_t value, std::uint32_t high, std::uint32_t type);
+std::uint32_t money_after(std::uint32_t value, int direction);
+
+// A copy of `savedata/UCES01245-GAMEDAT` into `savedata-backups/UCES01245-GAMEDAT-<stamp>` next to the savedata folder (not
+// inside it: the game lists that folder). `where` gets the copy's path, or stays empty when there is no save yet (true: nothing
+// to lose). False + `error` when the copy fails.
+bool backup_save(const std::filesystem::path &savedata, long long stamp, std::string &where, std::string &error);
+
 Settings parse_settings(const std::function<const char *(const char *)> &get, const std::function<void(const std::string &)> &warn);
 
 }  // namespace cheats

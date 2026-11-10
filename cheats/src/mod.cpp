@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -203,7 +204,49 @@ void on_step(GtModCtx *c) {
 constexpr std::uint32_t kFlagReader = 0x0894CCB8;
 unsigned g_ticks = 0;
 bool g_callguest = false;  // GT_MOD_CHEATS_CALLGUEST=1: verification only: the check's exercise of call_guest from the tick
+// Money (cheats_logic.hpp): the row's key presses are queued and applied by the tick, which reads the balance cell every vblank (the
+// label shows the cached value). Before the first change of a run the save folder is copied (cheats::backup_save); no copy, no change.
+std::atomic<int> g_money_request{0};                    // +1 / -1 queued by the row, 0 none
+std::atomic<std::uint32_t> g_money_seen{0xFFFFFFFFu};  // the balance at the last tick, all ones when the cell is not valid
+bool g_money_backed_up = false;
+bool g_money_backup_failed = false;
+std::uint64_t g_money_test_at = 0;  // GT_MOD_CHEATS_MONEY_AT=<vblank>: press the money row (+1M) once at that vblank
+
+void money_tick(GtModCtx *c) {
+    const std::uint32_t value = g_api->read32(c, cheats::kMoneyCell);
+    const bool valid = cheats::money_cell_valid(value, g_api->read32(c, cheats::kMoneyCell + 4), g_api->read32(c, cheats::kMoneyCell + 8));
+    g_money_seen.store(valid ? value : 0xFFFFFFFFu);
+    if (g_money_test_at != 0 && g_api->vblank_index(g_self) >= g_money_test_at) {  // GT_MOD_CHEATS_MONEY_AT (verification only)
+        g_money_test_at = 0;
+        g_money_request.store(1);
+    }
+    if (!valid) return;  // a queued press waits for the cell (loading, a menu without a game)
+    const int request = g_money_request.exchange(0);
+    if (request == 0) return;
+    char line[200];
+    if (!g_money_backed_up) {
+        const char *dir = std::getenv("GT_SAVEDATA_DIR");
+        std::string where, error;
+        if (dir == nullptr || !cheats::backup_save(dir, static_cast<long long>(std::time(nullptr)), where, error)) {
+            g_money_backup_failed = true;
+            std::snprintf(line, sizeof line, "MONEY refused: %s", dir == nullptr ? "no GT_SAVEDATA_DIR" : error.c_str());
+            g_api->log(g_self, line);
+            return;
+        }
+        g_money_backed_up = true;
+        g_money_backup_failed = false;
+        std::snprintf(line, sizeof line, "MONEY save backed up to %s", where.empty() ? "(no save yet)" : where.c_str());
+        g_api->log(g_self, line);
+    }
+    const std::uint32_t next = cheats::money_after(value, request);
+    g_api->write32(c, cheats::kMoneyCell, next);
+    g_money_seen.store(next);
+    std::snprintf(line, sizeof line, "ROW money -> %u (was %u)", next, value);
+    g_api->log(g_self, line);
+}
+
 void on_tick(GtModCtx *c) {
+    money_tick(c);
     if (!g_callguest || ++g_ticks % 300 != 30) return;
     std::uint32_t v0 = 0xFFFFFFFFu;
     const int status = g_api->call_guest(c, kFlagReader, nullptr, 0, &v0);
@@ -231,6 +274,14 @@ void freeze_activate(GtMod *, int) {
     g_api->log(g_self, line);
 }
 
+void money_label(GtMod *, char *out, std::uint32_t capacity) {
+    const std::uint32_t seen = g_money_seen.load();
+    if (g_money_backup_failed) std::snprintf(out, capacity, "Money        NO BACKUP");
+    else if (seen == 0xFFFFFFFFu) std::snprintf(out, capacity, "Money        --");
+    else std::snprintf(out, capacity, "Money        %u Cr +-1M", seen);
+}
+void money_activate(GtMod *, int direction) { g_money_request.store(direction < 0 ? -1 : 1); }
+
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
@@ -242,12 +293,14 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *e = std::getenv("GT_MOD_CHEATS_FREEZE_AI")) g_settings.freeze_ai = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_FROM")) g_settings.from_step = std::atol(e);
     if (const char *e = std::getenv("GT_MOD_CHEATS_CALLGUEST")) g_callguest = *e != '\0' && std::strcmp(e, "0") != 0;
+    if (const char *e = std::getenv("GT_MOD_CHEATS_MONEY_AT")) g_money_test_at = std::strtoull(e, nullptr, 10);
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG")) g_log = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG_EVERY"); e != nullptr && std::atoi(e) > 0) g_log_every = static_cast<unsigned>(std::atoi(e));
     g_slow.store(static_cast<int>(g_settings.slow));
     g_freeze.store(g_settings.freeze_ai);
     if (api->add_menu_row(self, "slow_motion", slow_label, slow_activate) != 0) return 1;
     if (api->add_menu_row(self, "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
+    if (api->add_menu_row(self, "money", money_label, money_activate) != 0) return 1;
     if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
 }
