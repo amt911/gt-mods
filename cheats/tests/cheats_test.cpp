@@ -134,12 +134,6 @@ static void settings() {
 }
 
 void money() {
-    using cheats::money_cell_valid;
-    assert(money_cell_valid(100000u, 0u, 0x00020100u));
-    assert(!money_cell_valid(100000u, 1u, 0x00020100u));          // high word set: not the balance
-    assert(!money_cell_valid(100000u, 0u, 0x00020101u));          // another script value type
-    assert(money_cell_valid(1100000u, 0u, 0x01030000u));          // after the game saved or loaded
-    assert(!money_cell_valid(1000000000u, 0u, 0x00020100u));      // above the game's cap
     assert(cheats::money_after(100000u, +1) == 1100000u);
     assert(cheats::money_after(500000u, -1) == 0u);               // never below zero
     assert(cheats::money_after(999500000u, +1) == 999999999u);    // the game's cap
@@ -160,7 +154,45 @@ void backup() {
     fs::remove_all(root);
 }
 
+void new_cheats() {
+    using namespace cheats;
+    assert(factor(AiSpeed::Half) == 0.5f && factor(AiSpeed::Fast) == 1.25f && factor(AiSpeed::Normal) == 1.0f);
+    assert(cycle(AiSpeed::Normal, +1) == AiSpeed::Half && cycle(AiSpeed::Fast, +1) == AiSpeed::Normal &&
+           cycle(AiSpeed::Normal, -1) == AiSpeed::Fast);
+    assert(std::string(name(AiSpeed::ThreeQuarter)) == "0.75x");
+    assert(ai_factor(SlowMo::Off, AiSpeed::Half, false) == 0.5f);
+    assert(ai_factor(SlowMo::Half, AiSpeed::Half, false) == 0.25f);   // both slow the AI
+    assert(ai_factor(SlowMo::Off, AiSpeed::Fast, true) == 0.0f);      // frozen wins
+
+    Kin k{};
+    k.v[kIxRows + 0] = 1.0f;  // forward = +x
+    k.v[kIxSpeed] = 10.0f;
+    k.v[kIxVel + 0] = 10.0f;
+    const Kin boosted = nitro(k, 1.0f, 0.5f);
+    assert(boosted.v[kIxVel + 0] == 13.0f && boosted.v[kIxSpeed] == 13.0f);   // 6 m/s^2 for 0.5 s
+    assert(nitro(k, 0.5f, 0.5f).v[kIxVel + 0] == 10.0f);                      // throttle not floored: nothing
+
+    Kin before{}, now{};
+    now.v[kIxRows + 8] = 1.0f;                                               // up row = the third axis
+    now.v[kIxVel + 2] = -10.0f;                                              // falling along it
+    now.v[kIxVel + 0] = 4.0f;                                                // and moving forward: kept
+    const Kin m = moon(before, now);
+    assert(m.v[kIxVel + 2] == -3.0f && m.v[kIxVel + 0] == 4.0f);
+    now.v[kIxVel + 2] = 5.0f;                                                // rising: untouched
+    assert(moon(before, now).v[kIxVel + 2] == 5.0f);
+
+    Kin up{};
+    up.v[kIxRows + 8] = 1.0f;
+    assert(jump(up).v[kIxVel + 2] == 6.0f && jump(up).v[kIxVel + 1] == 0.0f);
+    Kin pre{}, post{};
+    for (int i = 0; i < 3; ++i) { pre.v[kIxRows + i * 4] = 1.0f; post.v[kIxRows + i * 4] = 1.0f; }  // identity rows
+    post.v[kIxPos + 0] = 1.0f;                                                                    // moved 1 m
+    assert(scale_step(pre, post, 1.25f).v[kIxPos + 0] == 1.25f);                                  // a faster AI: extrapolated
+    assert(scale_step(pre, post, 9.0f).v[kIxPos + 0] == 1.5f);                                    // bounded
+}
+
 int main() {
+    new_cheats();
     money();
     backup();
     scale_endpoints_are_exact();

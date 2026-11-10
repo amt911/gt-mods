@@ -7,6 +7,12 @@ Needs mod API v2 (`api = 2`: `add_menu_row`); the host repo's `docs/MODS.md` has
 ## Use
 
 F9 (or the pad chord SELECT+START) opens the MODS page: after the mods' own rows come `Slow motion  OFF|0.5x|0.25x` and `Freeze AI  OFF|ON`.
+`AI speed  1x|0.5x|0.75x|1.25x` (AI cars' step at that fraction of the clock; above 1 it is extrapolated, up to 1.5x),
+`Nitro  ON|OFF` (with the throttle past 90 %, +6 m/s² along the car's heading), `Moon gravity  ON|OFF` (only 30 % of the speed lost
+falling along the car's up axis is applied), `Jump  ENTER` (+6 m/s along the car's up axis, once).
+Measured on the `cheats` route, steps 860-1400 (host repo `--decomp off`): nitro 503 m vs 204 m and top speed 92 vs 34 m/s; AI
+0.5x 118.6 m vs 256.3 m; AI 1.25x 329.8 m; jump: the car rises 1.3 m more than without it; jump with moon gravity: 4.5 m.
+
 `Money  <balance> Cr +-1M`: Enter or Right adds 1,000,000 Cr, Left takes 1,000,000 away (between 0 and the game's cap,
 999,999,999). The first change of a run copies the save folder to `savedata-backups/UCES01245-GAMEDAT-<time>` next to the
 savedata folder (with no save yet there is nothing to copy). The new balance is kept once the game saves (Options, or any of its
