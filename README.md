@@ -24,8 +24,8 @@ Nothing game-derived lives here: only hand-written mod code.
   reveals what was already submitted; the cost is GPU pixels, not game CPU. Post-hook on the depth builder `0x08AF4B4C` (called from `0x0890E41C`
   with near = `self+4`, far = `self+0xC` = 1200 in the races seen): the matrix terms m10/m14 are rewritten for `far * far_scale`
   (scene data is never written; a hook on `0x0890E41C` that scales and restores `self+0xC` does nothing, because `call_original`
-  returns before the rest of that body runs). `far_scale` in `mod.toml`, default `2.5`
-  (1200 -> 3000), range 1.0-6.0 (clamped, a warning is logged; non-numbers keep the default); 1.0 = frames identical to no
+  returns before the rest of that body runs). `far_scale` in `mod.toml`, default `1.5` (keeps 81 % of the extra far detail 2.5 gave, measured on frames; was 2.5)
+  (1200 -> 1800), range 1.0-6.0 (clamped, a warning is logged; non-numbers keep the default); 1.0 = frames identical to no
   mod (the mod writes nothing). Larger values thin the depth buffer (a few speckles on far geometry at 8000). The sky pass and
   the car reflection pass do not use this function and are untouched. Disabled by default; toggles live from the F9 menu.
   `GT_MOD_DRAWDIST_SCALE=<n>` overrides the setting (used by the in-game check, `tools/mod_drawdist_check.sh`);

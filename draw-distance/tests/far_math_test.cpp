@@ -18,9 +18,9 @@ static Settings parse(const std::map<std::string, std::string> &m, std::vector<s
         [&](const std::string &w) { (warns ? warns : &sink)->push_back(w); });
 }
 
-static void default_is_two_and_a_half() {
+static void default_is_one_and_a_half() {
     std::vector<std::string> w;
-    assert(parse({}, &w).far_scale == 2.5f && w.empty());
+    assert(parse({}, &w).far_scale == 1.5f && w.empty());
 }
 static void valid_value_is_kept() { assert(parse({{"far_scale", "4"}}).far_scale == 4.0f); }
 static void out_of_range_is_clamped_with_a_warning() {
@@ -34,7 +34,7 @@ static void out_of_range_is_clamped_with_a_warning() {
 static void garbage_keeps_the_default() {
     for (const char *bad : {"abc", "2x", "nan", "inf", "-inf"}) {
         std::vector<std::string> w;
-        assert(parse({{"far_scale", bad}}, &w).far_scale == 2.5f && w.size() == 1);
+        assert(parse({{"far_scale", bad}}, &w).far_scale == 1.5f && w.size() == 1);
     }
 }
 static void scale_parsing_for_env() {
@@ -117,7 +117,7 @@ int main() {
     world_depth_bounds();
     rescale_depth_matches_a_direct_build();
     rescale_depth_identity_and_garbage_write_nothing();
-    default_is_two_and_a_half();
+    default_is_one_and_a_half();
     valid_value_is_kept();
     out_of_range_is_clamped_with_a_warning();
     garbage_keeps_the_default();
