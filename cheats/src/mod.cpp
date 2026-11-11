@@ -189,6 +189,7 @@ void on_step(GtModCtx *c) {
     cheats::Controls ctl;
     if (replay) {  // the replay re-simulates the race: the controls the live race had at this step, never the menu's
         ctl = cheats::unpack(g_tape.at(tape_step));
+        g_jump.store(0);  // a jump pressed during the replay is dropped, not kept for the next race
     } else {
         if (g_jump_at != 0 && g_steps >= g_jump_at) { g_jump_at = 0; g_jump.store(1); }
         const bool pending_jump = g_jump.exchange(0) > 0;
