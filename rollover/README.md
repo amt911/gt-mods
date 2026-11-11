@@ -69,7 +69,7 @@ it drives on.
 - Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, with input live or `+0xA8` set in its replay). With two humans
   (ad hoc / split screen) nobody gets an impulse while the clamp stays lifted.
 - The roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
-- `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`);
+- `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`; `m<step>:<dv>` counts from the car's first movement instead, as `--replay` does);
   `GT_MOD_ROLLOVER_LOG=1` logs the car's state (used by `tools/mod_rollover_check.sh`).
 
 ## Tests
