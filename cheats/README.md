@@ -18,8 +18,8 @@ Measured on the `cheats` route, steps 860-1400 (host repo `--decomp off`): nitro
 savedata folder (with no save yet there is nothing to copy). The new balance is kept once the game saves (Options, or any of its
 own saves): measured in game, a +1M then the Options save then a restart showed the new balance (host repo FACTS
 "Money and cars"). The row shows `--` when no game is loaded and refuses to change anything if the backup fails.
-Right / Enter step forward, Left back (pad: D-pad right / cross, D-pad left). Both act only in a live race (exactly one human car, never a replay);
-outside one nothing is touched. Turning the mod off in F9 stops everything at once (the host passes the hook straight to the game).
+Right / Enter step forward, Left back (pad: D-pad right / cross, D-pad left). Both act only in a race (exactly one human car);
+outside one nothing is touched. In the race's replay the menu is not read: see Replays below. Turning the mod off in F9 stops everything at once (the host passes the hook straight to the game).
 
 ## How
 
@@ -36,13 +36,23 @@ without a call (the game's own count, `vblank_index`).
 Why not skip whole steps (every other world step does not run): the game steps at ~30 Hz, so 0.25x would draw 7 steps per second. Why not scale a
 time step: the world step takes no dt (its caller passes one, `0x0894DD9C` ignores it: fixed step).
 
+## Replays (0.4.0)
+
+The game's replay re-simulates the race from the recorded pad stream, so a cheat that changes physics must act there exactly as it did live, or
+the replayed cars leave the recorded line. The live race records the controls in force at each physics step (slow motion, freeze AI, AI speed, nitro,
+moon gravity, a jump on that step: one byte a step), counted from the step at which the player's car first moved; the replay plays them back from the
+same moment and ignores the menu. (The replay counts its steps from another point of the start countdown, -14 steps measured, so the first movement is
+the shared reference.) Needs a host whose `race_cars` lists the replayed player car (role 3); with an older host the replay runs without cheats, as
+before. Checked in game by `tools/mod_cheats_check.sh --replay` in the host repo.
+
 ## Limits
 
 - **Not slowed:** the game's clocks (race timer, lap counter, countdown), the AI drivers' own state (a frozen AI car's driver keeps running against a car
   that does not move), tyre and engine state outside the body (wheel spin, rpm), sound and camera. Collisions during slow motion resolve over more steps.
 - The picture drawn between two calls shows each car one full step ahead of the mod's base: a constant lead, so the motion on screen is `f` times as fast.
 - A Time Trial ghost may be treated like an AI car (slowed or frozen); untested, as are
-   two human players (the mod then does nothing), replays (ignored on purpose).
+   two human players (the mod then does nothing). A cheat changed during the start countdown (before the player's car moves) is replayed with
+   the controls of the first moving step.
 
 ## Settings (`mod.toml`)
 

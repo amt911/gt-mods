@@ -100,7 +100,7 @@ struct Settings {
     SlowMo slow = SlowMo::Off;
     bool freeze_ai = false;
     long from_step = 0;  // the cheats start at this player-car step (check aid; 0 = at once)
-    int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing
+    int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing, 3 = nothing recorded (the replay runs without cheats)
 };
 // Money: Enter/Right add 1,000,000, Left takes it away, clamped to [0, kMoneyCap]; the cell itself is the host's (API v3 money_get/set).
 constexpr std::uint32_t kMoneyCap = 999999999u;
