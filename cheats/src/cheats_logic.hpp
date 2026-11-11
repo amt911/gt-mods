@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include <array>
 #include <functional>
@@ -69,11 +70,37 @@ Kin moon(const Kin &before, const Kin &now);
 constexpr float kJumpSpeed = 6.0f;
 Kin jump(const Kin &now);
 
+// The cheats in force at one physics step, packed in one byte (all off = 0): bits 0-1 slow motion, 2 freeze AI, 3-4 AI speed, 5 nitro,
+// 6 moon gravity, 7 a jump on that step.
+struct Controls {
+    SlowMo slow = SlowMo::Off;
+    bool freeze = false;
+    AiSpeed ai = AiSpeed::Normal;
+    bool nitro = false, moon = false, jump = false;
+};
+std::uint8_t pack(const Controls &c);
+Controls unpack(std::uint8_t b);
+
+// The replay re-simulates the race from the recorded pad stream, so the cheats must act there as they did live. The live race records one
+// byte a step, indexed by the steps since the player's car first moved (a replay counts its steps from another point of the start countdown;
+// the first movement is the same moment in both). Before that index the first byte applies, after the end of the recording nothing (0).
+class Tape {
+  public:
+    void clear() { bytes_.clear(); }
+    bool empty() const { return bytes_.empty(); }
+    std::size_t size() const { return bytes_.size(); }
+    void record(long step, std::uint8_t b);  // steps skipped since the last record keep the last byte; step < 0 is ignored
+    std::uint8_t at(long step) const;
+
+  private:
+    std::vector<std::uint8_t> bytes_;
+};
+
 struct Settings {
     SlowMo slow = SlowMo::Off;
     bool freeze_ai = false;
     long from_step = 0;  // the cheats start at this player-car step (check aid; 0 = at once)
-    int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing
+    int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing, 3 = nothing recorded (the replay runs without cheats)
 };
 // Money: Enter/Right add 1,000,000, Left takes it away, clamped to [0, kMoneyCap]; the cell itself is the host's (API v3 money_get/set).
 constexpr std::uint32_t kMoneyCap = 999999999u;

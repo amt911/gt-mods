@@ -12,7 +12,8 @@
 // angular rates, Euler angles). f = 0.5 / 0.25 for slow motion, 0 for an AI car while AI is frozen (it keeps the speed it had and
 // goes on from it when the cheat is turned off). Nothing is written when f = 1 (frames are byte-identical to no mod). The picture
 // drawn between two calls shows the car one full step ahead of `base`, a constant lead, so the motion on screen is f times as fast.
-// It acts only while exactly one live human car exists (a race, never a replay, never two humans), never on a car that moved more
+// It acts only while exactly one human car exists (a race or its replay, never two humans; in the replay the controls recorded live are
+// played back, README "Replays"), never on a car that moved more
 // than 8 m since the last call (a respawn, reset-to-track), restarts its bases after 8 vblanks without a call (the game's own count, not the wall clock) (the mod was off
 // in F9) and leaves a slot whose pointers are unreadable alone.
 //
@@ -56,8 +57,11 @@ unsigned g_jump_at = 0;          // GT_MOD_CHEATS_JUMP_AT=<step> (checks): one j
 bool g_log = false;
 unsigned g_log_every = 10;  // GT_MOD_CHEATS_LOG_EVERY: steps between log lines
 std::uint32_t g_player = 0, g_steps = 0;  // the player's car, steps seen with it
+bool g_replay = false;      // the player's car is in its replay
+long g_moved_at = -1;       // the step at which the player's car first moved (> 1 m/s): the tape's step 0
+cheats::Tape g_tape;        // the live race's controls, played back in its replay
 
-enum class Role { None, Human, Ai };
+enum class Role { None, Human, Ai, ReplayHuman };  // ReplayHuman: the player's car in its replay (API role 3)
 
 struct Car {
     int slot = 0;
@@ -101,11 +105,11 @@ GtCarState with_kin(GtCarState s, const cheats::Kin &k) {
 }
 
 // The race through the named SDK (API v3): fills cars[] and returns their count, or 0 when this is not a race with exactly
-// one live human.
-int read_world(GtModCtx *c, std::uint32_t world, Car *cars, std::uint32_t &player_body) {
+// one human car, live or in its replay (*replay says which; a host without replay support never lists role 3).
+int read_world(GtModCtx *c, std::uint32_t world, Car *cars, std::uint32_t &player_body, bool *replay) {
     GtCar list[32];
     const std::uint32_t total = g_api->race_cars(g_self, c, world, list, 32);
-    int n = 0, humans = 0;
+    int n = 0, humans = 0, replays = 0;
     player_body = 0;
     for (std::uint32_t i = 0; i < total && i < 32 && n < kMaxCars; ++i) {
         if (list[i].index >= static_cast<std::uint32_t>(kMaxCars)) continue;
@@ -113,22 +117,25 @@ int read_world(GtModCtx *c, std::uint32_t world, Car *cars, std::uint32_t &playe
         if (g_api->car_state(g_self, c, list[i].handle, &car.state) != 0) continue;
         car.slot = static_cast<int>(list[i].index);
         car.body = list[i].handle;
-        car.role = list[i].role == 1 ? Role::Human : Role::Ai;
+        car.role = list[i].role == 1 ? Role::Human : list[i].role == 3 ? Role::ReplayHuman : Role::Ai;
         car.now = kin_of(car.state);
-        if (car.role == Role::Human) {
-            ++humans;
+        if (car.role != Role::Ai) {
+            ++(car.role == Role::Human ? humans : replays);
             player_body = car.body;
         }
         ++n;
     }
-    return humans == 1 ? n : 0;
+    *replay = replays == 1;
+    return humans + replays == 1 ? n : 0;
 }
 
-void log_cars(const Car *cars, int n, bool active) {  // slow/freeze read OFF/0 until GT_MOD_CHEATS_FROM has passed
-    char line[420];
-    int len = std::snprintf(line, sizeof line, "st=%u slow=%s freeze=%d", g_steps, active ? cheats::name(static_cast<cheats::SlowMo>(g_slow.load())) : "OFF", active && g_freeze.load() ? 1 : 0);
+// The controls this step used (off until GT_MOD_CHEATS_FROM has passed; the tape's in a replay). `since` = steps since the player's car
+// first moved (-1 before): the step a replay is paired on, its own count starting elsewhere in the countdown.
+void log_cars(const Car *cars, int n, const cheats::Controls &ctl, long since) {
+    char line[460];
+    int len = std::snprintf(line, sizeof line, "st=%u slow=%s freeze=%d", g_steps, cheats::name(ctl.slow), ctl.freeze ? 1 : 0);
     for (int i = 0; i < n; ++i) {  // the player first, then the AI cars in slot order
-        if (cars[i].role != Role::Human) continue;
+        if (cars[i].role == Role::Ai) continue;
         const GtCarState &s = cars[i].state;
         len += std::snprintf(line + len, sizeof line - len, " P=%.3f,%.3f,%.3f spd=%.3f acc=%.2f", s.position[0], s.position[1],
                              s.position[2], s.speed, s.throttle);
@@ -139,6 +146,7 @@ void log_cars(const Car *cars, int n, bool active) {  // slow/freeze read OFF/0 
         const GtCarState &s = cars[i].state;
         len += std::snprintf(line + len, sizeof line - len, " A%d=%.3f,%.3f,%.3f", ai++, s.position[0], s.position[1], s.position[2]);
     }
+    std::snprintf(line + len, sizeof line - len, " since=%ld rep=%d ai=%s", since, g_replay ? 1 : 0, cheats::name(ctl.ai));
     g_api->log(g_self, line);
 }
 
@@ -146,7 +154,8 @@ void on_step(GtModCtx *c) {
     Car cars[kMaxCars];
     int n = 0;
     std::uint32_t player_body = 0;
-    n = read_world(c, g_api->gpr(c, 4), cars, player_body);  // the host checks every pointer
+    bool replay = false;
+    n = read_world(c, g_api->gpr(c, 4), cars, player_body, &replay);  // the host checks every pointer
     if (n == 0) {
         g_player = 0;
         g_steps = 0;
@@ -154,9 +163,17 @@ void on_step(GtModCtx *c) {
         g_api->call_original(c);
         return;
     }
-    if (player_body != g_player) {  // a new race (the player's body changed)
+    if (player_body != g_player || replay != g_replay) {  // a new race (the player's body changed), or its replay starting / ending
+        if (!replay) g_tape.clear();  // a live race records afresh; a replay plays back what the live race recorded
+        if (g_log && player_body == g_player) {
+            char line[80];
+            std::snprintf(line, sizeof line, replay ? "REPLAY start tape=%zu" : "REPLAY end", g_tape.size());
+            g_api->log(g_self, line);
+        }
         g_player = player_body;
+        g_replay = replay;
         g_steps = 0;
+        g_moved_at = -1;
         for (Base &b : g_base) b.valid = false;
     }
     const std::uint64_t vblank = g_api->vblank_index(g_self);
@@ -164,13 +181,33 @@ void on_step(GtModCtx *c) {
         for (Base &b : g_base) b.valid = false;  // switched off in F9 for a while, or a long pause: the old bases are stale
     g_last_vblank = vblank;
     ++g_steps;
-    const auto slow = static_cast<cheats::SlowMo>(g_slow.load());
-    const bool freeze = g_freeze.load();
-    const auto ai_speed = static_cast<cheats::AiSpeed>(g_ai_speed.load());
-    const bool nitro = g_nitro.load(), moon = g_moon.load();
-    if (g_jump_at != 0 && g_steps >= g_jump_at) { g_jump_at = 0; g_jump.store(1); }
-    const bool jump = g_jump.exchange(0) > 0;
-    const bool active = static_cast<long>(g_steps) > g_settings.from_step;
+    for (int i = 0; i < n && g_moved_at < 0; ++i) {
+        const float *v = cars[i].state.velocity;
+        if (cars[i].role != Role::Ai && v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 1.0f) g_moved_at = static_cast<long>(g_steps);
+    }
+    const long tape_step = g_moved_at < 0 ? -1 : static_cast<long>(g_steps) - g_moved_at;
+    cheats::Controls ctl;
+    if (replay) {  // the replay re-simulates the race: the controls the live race had at this step, never the menu's
+        ctl = cheats::unpack(g_tape.at(tape_step));
+        g_jump.store(0);  // a jump pressed during the replay is dropped, not kept for the next race
+    } else {
+        if (g_jump_at != 0 && g_steps >= g_jump_at) { g_jump_at = 0; g_jump.store(1); }
+        const bool pending_jump = g_jump.exchange(0) > 0;
+        if (static_cast<long>(g_steps) > g_settings.from_step) {  // before from_step (a check aid) everything is off, and recorded so
+            ctl.slow = static_cast<cheats::SlowMo>(g_slow.load());
+            ctl.freeze = g_freeze.load();
+            ctl.ai = static_cast<cheats::AiSpeed>(g_ai_speed.load());
+            ctl.nitro = g_nitro.load();
+            ctl.moon = g_moon.load();
+            ctl.jump = pending_jump;
+        }
+        if (g_settings.sabotage != 3) g_tape.record(tape_step, cheats::pack(ctl));  // sabotage 3: nothing recorded (the replay runs without cheats)
+    }
+    const auto slow = ctl.slow;
+    const bool freeze = ctl.freeze;
+    const auto ai_speed = ctl.ai;
+    const bool nitro = ctl.nitro, moon = ctl.moon, jump = ctl.jump;
+    const bool active = replay || static_cast<long>(g_steps) > g_settings.from_step;
     for (int i = 0; i < n; ++i) {
         Base &base = g_base[cars[i].slot];
         const bool ai = cars[i].role == Role::Ai;
@@ -198,7 +235,7 @@ void on_step(GtModCtx *c) {
         base.body = cars[i].body;
         base.kin = out;
     }
-    if (g_log && g_steps % g_log_every == 0) log_cars(cars, n, active);
+    if (g_log && g_steps % g_log_every == 0) log_cars(cars, n, ctl, tape_step);
     g_api->call_original(c);
 }
 
