@@ -72,8 +72,11 @@ std::unique_ptr<rollover::Tracker> g_tracker;
 bool g_log = false;
 std::uint32_t g_car = 0, g_car_steps = 0, g_impulses = 0, g_since_impulse = 0;
 long g_fake_step = -1;
+bool g_fake_from_move = false;  // GT_MOD_ROLLOVER_FAKE=m<steps>:<dv>: <steps> after the car first moves (> 1 m/s), not after the race's first step
+long g_moved_at = -1;          // the player-car step at which the car first moved
 float g_fake_dv = 0.0f;
 float g_fake_offset[3] = {0, 0, 0};
+bool g_replay = false;  // the player car is in its replay (the race's state was reset when it started)
 std::uint32_t g_ras[32], g_ra_count = 0;
 bool g_in_body = false, g_in_flip = false, g_only_step = false;
 std::chrono::steady_clock::time_point g_last_step_wall;
@@ -82,7 +85,10 @@ unsigned g_body_hits = 0;
 float g_prev_vel[3] = {0, 0, 0};
 bool g_have_prev_vel = false;
 
-std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
+// The player's car, live or in its replay (*replay set then). Live: the entry's +0xA8 == 0 and +0x6C (pad device) != 0; replay: +0xA8 != 0
+// (docs/FACTS.md "Replay of the same session"). A replay re-simulates the race from the recorded pad stream, so the mod must act there
+// exactly as it did live, or the replayed car leaves the recorded line (seen: a car that rolled live drives on upright in the replay).
+std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world, bool *replay) {
     const GtModApi &a = *g_api;
     const std::uint32_t slots = a.read32(c, world + 4), controller = a.read32(c, world + 0x10);
     if (slots == 0 || controller == 0) return 0;
@@ -96,9 +102,13 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
         if (ix < 0) continue;
         const std::uint32_t entry = a.read32(c, list + 4 + (2 * i + ix) * 4);
         if (entry == 0) continue;
-        if (a.read32(c, entry) == kPlayerVtable && a.read8(c, entry + kEntryReplay) == 0 && a.read32(c, entry + kEntryInput) != 0) {
+        if (a.read32(c, entry) != kPlayerVtable) continue;
+        const bool rep = a.read8(c, entry + kEntryReplay) != 0;
+        if (rep && g_settings.sabotage == 10) continue;  // check build: the old live-only pick (the replay runs without the mod and leaves the recorded line)
+        if (rep || a.read32(c, entry + kEntryInput) != 0) {
             ++humans;
             found = slots + i * kSlotSize + kCarInSlot;
+            *replay = rep;
         }
     }
     return humans == 1 ? found : 0;
@@ -303,22 +313,28 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
 // `--decomp on` abort seen ~12000 steps after the route is in the game's own func_08BD4270, not here; docs/FINDINGS.md).
 void step_body(GtModCtx *c) {
     const GtModApi &a = *g_api;
-    const std::uint32_t car = find_player_car(c, a.gpr(c, 4));
+    bool replay = false;
+    const std::uint32_t car = find_player_car(c, a.gpr(c, 4), &replay);
     const std::uint32_t body = car != 0 ? a.read32(c, car + kBody) : 0;
     if (car == 0 || body == 0) {
         if (g_car != 0) g_tracker->reset();
         reset_box_state();
         g_car = 0;
         g_car_steps = 0;
+        g_moved_at = -1;
         g_have_prev_vel = false;
         return;
     }
-    if (car != g_car) {  // a new race: the car's address changed
+    if (car != g_car || replay != g_replay) {  // a new race (the car's address changed) or its replay starting (same car): start from scratch
+        if (g_log && car == g_car) a.log(g_self, replay ? "REPLAY start" : "REPLAY end");
+        g_replay = replay;
+        for (float &o : g_fake_offset) o = 0.0f;
         g_tracker->reset();
         reset_box_state();
         g_car = car;
         g_car_steps = 0;
         g_impulses = 0;
+        g_moved_at = -1;
         g_have_prev_vel = false;
     }
     const auto now = std::chrono::steady_clock::now();
@@ -336,7 +352,11 @@ void step_body(GtModCtx *c) {
         fwd[i] = a.readf(c, body + kForward + 4 * i);
         pos[i] = a.readf(c, body + kPos + 4 * i);
     }
-    if (g_fake_step >= 0 && static_cast<long>(g_car_steps) == g_fake_step)  // the tracker sees a velocity jump that stays (a constant offset: no second jump)
+    if (g_moved_at < 0 && vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2] > 1.0f) g_moved_at = static_cast<long>(g_car_steps);
+    // a replay counts its steps from a slightly different point of the start countdown than the live race (docs/FACTS.md), so a fake hit that
+    // must land on the same moment of both counts from the car's first movement
+    const long fake_at = !g_fake_from_move ? g_fake_step : (g_moved_at < 0 ? -1 : g_moved_at + g_fake_step);
+    if (g_fake_step >= 0 && static_cast<long>(g_car_steps) == fake_at)  // the tracker sees a velocity jump that stays (a constant offset: no second jump)
         for (int i = 0; i < 3; ++i) g_fake_offset[i] = right[i] * g_fake_dv;
     for (int i = 0; i < 3; ++i) vel[i] += g_fake_offset[i];
     if (g_log && g_have_prev_vel) {  // diagnostics for tuning: every step whose lateral or forward velocity change is noticeable
@@ -364,6 +384,13 @@ void step_body(GtModCtx *c) {
             a.log(g_self, line);
         }
     }
+    // nose down/up the forward axis is vertical: holding a roll rate would spin the car about the vertical (the "spinning top"), so the drive
+    // fades out as the axis tilts and ends once it is steep (sabotage 9 keeps it: the check must see the spin come back)
+    if (held != 0.0f && g_settings.sabotage != 9) {
+        const float w = rollover::roll_axis_weight(fwd);
+        if (w == 0.0f) g_tracker->cancel();
+        held *= w;
+    }
     if (g_settings.sabotage == 2 || g_settings.sabotage == 5) held = 0.0f;  // sabotage (the check must fail): the flag without any impulse / stock physics
     if (held != 0.0f) {
         const float rate = a.readf(c, body + kRollRate);
@@ -371,7 +398,7 @@ void step_body(GtModCtx *c) {
         if (want != rate) a.writef(c, body + kRollRate, want);
     }
     if (g_settings.body_box || g_log) body_box_step(c, car, body, g_settings.body_box);  // log-only runs measure what the stock game does
-    if (g_log && (g_car_steps % 30 == 0 || (g_impulses != 0 && g_since_impulse < 150 && g_car_steps % 3 == 0))) log_state(c, body, held);
+    if (g_log && (g_car_steps % 30 == 0 || (g_impulses != 0 && g_since_impulse < 150 && g_since_impulse % 3 == 0))) log_state(c, body, held);
 }
 
 void on_step(GtModCtx *c) {
@@ -381,6 +408,7 @@ void on_step(GtModCtx *c) {
         g_tracker->reset();
         g_car = 0;
         g_car_steps = 0;
+        g_moved_at = -1;
         g_have_prev_vel = false;
     }
     g_api->call_original(c);
@@ -416,7 +444,8 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *fake = std::getenv("GT_MOD_ROLLOVER_FAKE")) {
         float dv = 0.0f;
         long step = 0;
-        if (std::sscanf(fake, "%ld:%f", &step, &dv) == 2 && step >= 0 && std::isfinite(dv)) {
+        g_fake_from_move = fake[0] == 'm';
+        if (std::sscanf(fake + (g_fake_from_move ? 1 : 0), "%ld:%f", &step, &dv) == 2 && step >= 0 && std::isfinite(dv)) {
             g_fake_step = step;
             g_fake_dv = dv;
         }

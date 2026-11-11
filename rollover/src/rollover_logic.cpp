@@ -104,6 +104,13 @@ float Tracker::step(const float vel[3], const float right[3], const float pos[3]
     return out;
 }
 
+float roll_axis_weight(const float fwd[3]) {
+    const float z = std::fabs(fwd[2]);
+    if (!std::isfinite(z) || !std::isfinite(fwd[0]) || !std::isfinite(fwd[1]) || z >= kRollAxisNone) return 0.0f;
+    if (z <= kRollAxisFull) return 1.0f;
+    return (kRollAxisNone - z) / (kRollAxisNone - kRollAxisFull);
+}
+
 float apply_rate(float current, float held, float cap) {
     if (!std::isfinite(current) || !std::isfinite(held) || held == 0.0f) return current;
     const float want = std::fmax(-cap, std::fmin(cap, held));  // never above the cap on our account

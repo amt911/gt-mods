@@ -17,11 +17,17 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
    the road and is pushed back up ~6 m (measured, host repo `docs/FACTS.md`, "Rollovers"). A first version lifted the flag for every reader and
    changed a few pixels of a car settling on the grid; with the narrowed flag a run with the mod on and no hit is frame-identical to a run
    without it (the in-game check proves it, `--decomp off` and `on`).
-3. **The impulse.** A pre-step hook on `0x0894DD9C` (the player car only, never a replay) compares the car's world velocity with the previous step. A change along
+3. **The impulse.** A pre-step hook on `0x0894DD9C` (the player car only, live and in its replay) compares the car's world velocity with the previous step. A change along
    the car's lateral axis (`K+0x28` row) above `threshold` in ONE step is a hard side impact: the car is made to roll toward the side it hit
    (`K+0x6F4`, the roll rate) at `gain` x (change - threshold) rad/s, at most `cap`, held for 40 steps with a linear decay (a one-step kick
    is undone by the springs). Normal driving changes the lateral velocity by ~0.2 m/s per step: nothing happens. A jump of the car (> 3 m in
    a step: reset-to-track, a respawn) or of its velocity (> 60 m/s) is not an impact and drops what was being held.
+   The roll is about the car's forward axis, so it only tips the car while that axis is near horizontal (0.3.0): the held rate fades out as
+   the nose points up or down (full up to |forward.z| 0.5, none from 0.8) and the drive ends there. Before, a car standing on its nose got the
+   roll rate about a vertical axis and spun like a top.
+   **Replays (0.3.0).** The game's replay re-simulates the race from the recorded pad stream, so the mod acts in the replay too, from a clean
+   state when the replay starts (the same car; entry byte `+0xA8` turns 1): the hit falls on the same step and the car rolls as it did live.
+   Before, the mod skipped the replay and the replayed car drove on upright, off the recorded line.
 
 4. **The body box (0.2.0).** The game has no body collision: only the wheels touch the road, so a car on its roof sank 0.5-1.3 m into it
    (measured: the deepest of the box's 8 corners 1.02 m below the ground). The mod puts a box around the player's car (length 0.8 x wheelbase
@@ -60,7 +66,7 @@ it drives on.
 - There is no roof collision in the game: a rolling car keeps its wheels' contact model and always recovers; it does not stay on its roof.
 - The clamp is lifted for every car: an AI car that tilts past 35 degrees is no longer held. AI cars get no impulses and none was seen to tilt
   that far in the runs, but this is not proven for every track.
-- Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, not a replay, with input). With two humans
+- Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, with input live or `+0xA8` set in its replay). With two humans
   (ad hoc / split screen) nobody gets an impulse while the clamp stays lifted.
 - The roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
 - `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`);
@@ -68,5 +74,5 @@ it drives on.
 
 ## Tests
 
-`ctest --test-dir build` runs `rollover_test` (settings, threshold, cap, style, signs, decay, teleport guards). The in-game check lives in the
+`ctest --test-dir build` runs `rollover_test` (settings, threshold, cap, style, signs, decay, teleport guards, the forward-axis weight). The in-game check lives in the
 decomp repo: `tools/mod_rollover_check.sh` (see `docs/MODS.md` there).

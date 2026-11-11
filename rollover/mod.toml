@@ -1,6 +1,6 @@
 id = "rollover"
 name = "Rollovers"
-version = "0.2.0"
+version = "0.3.0"
 library = "librollover.so"
 api = 1
 enabled = false
