@@ -197,6 +197,30 @@ static void apply_rate_rules() {
     assert(std::isnan(apply_rate(std::numeric_limits<float>::quiet_NaN(), 5.0f, 9.0f)));  // garbage in the car's state is left alone
 }
 
+// A roll about the forward axis only tips the car while that axis is near horizontal: with the nose down it is a spin about the vertical
+// (the "spinning top" seen in play). Full weight up to |fwd.z| 0.5, none from 0.8, linear between.
+static void roll_axis_weight_rules() {
+    const float level[3] = {1, 0, 0}, nose_down[3] = {0, 0, -1}, nose_up[3] = {0.0f, 0.6f, 0.8f}, half[3] = {0.0f, 0.8f, 0.6f};
+    const float mid[3] = {0.0f, std::sqrt(1.0f - 0.65f * 0.65f), -0.65f};
+    assert(near(roll_axis_weight(level), 1.0f));
+    assert(near(roll_axis_weight(half), 1.0f - (0.6f - 0.5f) / 0.3f));
+    assert(near(roll_axis_weight(mid), 0.5f));
+    assert(roll_axis_weight(nose_down) == 0.0f && roll_axis_weight(nose_up) == 0.0f);
+    const float junk[3] = {std::numeric_limits<float>::quiet_NaN(), 0, 0};
+    assert(roll_axis_weight(junk) == 0.0f);
+}
+
+static void tracker_cancel_keeps_history() {
+    Tracker t(base());
+    const float right[3] = {0, 1, 0}, pos[3] = {0, 0, 0};
+    float v0[3] = {10, 0, 0}, v1[3] = {10, -6, 0};
+    t.step(v0, right, pos);
+    assert(t.step(v1, right, pos) != 0.0f && t.steps_left() > 0);
+    t.cancel();
+    assert(t.steps_left() == 0);
+    assert(t.step(v1, right, pos) == 0.0f);  // same velocity as before the cancel: no new hit, nothing held
+}
+
 int main() {
     settings_defaults_and_invalid();
     body_box_settings();
@@ -209,5 +233,7 @@ int main() {
     tracker_ignores_teleports_and_junk();
     tracker_reset();
     apply_rate_rules();
+    roll_axis_weight_rules();
+    tracker_cancel_keeps_history();
     return 0;
 }

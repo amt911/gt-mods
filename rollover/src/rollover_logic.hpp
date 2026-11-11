@@ -23,7 +23,7 @@ struct Settings {
     bool body_box = true;    // the body box (bodybox.hpp): the tumbling car's body stops at the ground instead of sinking into it
     float box_height = 0.8f;  // m: the box's roof above the body origin (the game has no body height; a heuristic: roof ~1.2 m over the road)
     float box_kick_cap = 0.5f; // m/s: largest speed away from the ground the car keeps in a step where its body touches it (limits the hop; never applied without a contact)
-    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap)
+    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap), 9 = the roll drive also with the forward axis vertical (spinning top), 10 = live only (the mod skips the replay)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
@@ -44,6 +44,7 @@ class Tracker {
     // Positive = toward `right`: the car rolls toward the side it hit, i.e. opposite to the velocity change along `right`.
     float step(const float vel[3], const float right[3], const float pos[3]);
     void reset() { have_prev_ = false; left_ = 0; target_ = 0.0f; }  // no player car / a new race
+    void cancel() { left_ = 0; target_ = 0.0f; }  // end the drive, keep the last sample (the next step still compares against it)
     int steps_left() const { return left_; }
 
   private:
@@ -54,6 +55,12 @@ class Tracker {
     int left_ = 0;
     float target_ = 0.0f;  // signed, at the start of the drive
 };
+
+// How much of a roll drive applies with the car's forward axis `fwd` (unit, world; z up): a roll about the forward axis tips the car only
+// while that axis is near horizontal; nose down (or up) it is a spin about the vertical, the "spinning top". 1 up to |fwd.z| 0.5, 0 from
+// 0.8, linear between; non-finite input gives 0.
+constexpr float kRollAxisFull = 0.5f, kRollAxisNone = 0.8f;
+float roll_axis_weight(const float fwd[3]);
 
 // The roll rate to write given the car's current one: the held rate when it is larger in its direction, else untouched (a hit never
 // slows a roll that is already faster the same way); what is written never exceeds `cap` in magnitude.
