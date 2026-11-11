@@ -184,4 +184,38 @@ Kin jump(const Kin &now) {
     return out;
 }
 
+std::uint8_t pack(const Controls &c) {
+    return static_cast<std::uint8_t>((static_cast<unsigned>(c.slow) & 3u) | (c.freeze ? 4u : 0u) | ((static_cast<unsigned>(c.ai) & 3u) << 3) |
+                                     (c.nitro ? 0x20u : 0u) | (c.moon ? 0x40u : 0u) | (c.jump ? 0x80u : 0u));
+}
+
+Controls unpack(std::uint8_t b) {
+    Controls c;
+    c.slow = static_cast<SlowMo>(std::min(b & 3u, 2u));
+    c.freeze = (b & 4u) != 0;
+    c.ai = static_cast<AiSpeed>((b >> 3) & 3u);
+    c.nitro = (b & 0x20u) != 0;
+    c.moon = (b & 0x40u) != 0;
+    c.jump = (b & 0x80u) != 0;
+    return c;
+}
+
+void Tape::record(long step, std::uint8_t b) {
+    if (step < 0) return;
+    const auto at = static_cast<std::size_t>(step);
+    if (at < bytes_.size()) {
+        bytes_[at] = b;
+        return;
+    }
+    const std::uint8_t fill = bytes_.empty() ? b : bytes_.back();
+    bytes_.resize(at, fill);
+    bytes_.push_back(b);
+}
+
+std::uint8_t Tape::at(long step) const {
+    if (bytes_.empty()) return 0;
+    if (step < 0) return bytes_.front();
+    return static_cast<std::size_t>(step) < bytes_.size() ? bytes_[static_cast<std::size_t>(step)] : 0;
+}
+
 }  // namespace cheats

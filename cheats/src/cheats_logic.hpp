@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include <array>
 #include <functional>
@@ -68,6 +69,32 @@ Kin moon(const Kin &before, const Kin &now);
 // Jump: kJumpSpeed m/s added along the car's up row, once.
 constexpr float kJumpSpeed = 6.0f;
 Kin jump(const Kin &now);
+
+// The cheats in force at one physics step, packed in one byte (all off = 0): bits 0-1 slow motion, 2 freeze AI, 3-4 AI speed, 5 nitro,
+// 6 moon gravity, 7 a jump on that step.
+struct Controls {
+    SlowMo slow = SlowMo::Off;
+    bool freeze = false;
+    AiSpeed ai = AiSpeed::Normal;
+    bool nitro = false, moon = false, jump = false;
+};
+std::uint8_t pack(const Controls &c);
+Controls unpack(std::uint8_t b);
+
+// The replay re-simulates the race from the recorded pad stream, so the cheats must act there as they did live. The live race records one
+// byte a step, indexed by the steps since the player's car first moved (a replay counts its steps from another point of the start countdown;
+// the first movement is the same moment in both). Before that index the first byte applies, after the end of the recording nothing (0).
+class Tape {
+  public:
+    void clear() { bytes_.clear(); }
+    bool empty() const { return bytes_.empty(); }
+    std::size_t size() const { return bytes_.size(); }
+    void record(long step, std::uint8_t b);  // steps skipped since the last record keep the last byte; step < 0 is ignored
+    std::uint8_t at(long step) const;
+
+  private:
+    std::vector<std::uint8_t> bytes_;
+};
 
 struct Settings {
     SlowMo slow = SlowMo::Off;

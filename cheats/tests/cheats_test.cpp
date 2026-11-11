@@ -191,6 +191,37 @@ void new_cheats() {
     assert(scale_step(pre, post, 9.0f).v[kIxPos + 0] == 1.5f);                                    // bounded
 }
 
+// The replay re-simulates the race: the cheats in force at each step are recorded live (one byte a step, counted from the player car's
+// first movement) and played back in the replay.
+static void controls_pack_roundtrip() {
+    for (int s = 0; s < 3; ++s)
+        for (int a = 0; a < 4; ++a)
+            for (int bits = 0; bits < 16; ++bits) {
+                Controls c{static_cast<SlowMo>(s), (bits & 1) != 0, static_cast<AiSpeed>(a), (bits & 2) != 0, (bits & 4) != 0, (bits & 8) != 0};
+                const Controls d = unpack(pack(c));
+                assert(d.slow == c.slow && d.freeze == c.freeze && d.ai == c.ai && d.nitro == c.nitro && d.moon == c.moon && d.jump == c.jump);
+            }
+    assert(pack(Controls{}) == 0);  // all off is the byte 0
+}
+
+static void tape_records_and_plays_back() {
+    Tape t;
+    assert(t.empty() && t.at(0) == 0 && t.at(-3) == 0);
+    t.record(0, 5);
+    t.record(1, 7);
+    t.record(4, 9);  // steps 2 and 3 were not seen: they keep the last byte
+    assert(!t.empty() && t.size() == 5);
+    assert(t.at(0) == 5 && t.at(1) == 7 && t.at(2) == 7 && t.at(3) == 7 && t.at(4) == 9);
+    assert(t.at(-1) == 5);  // before the car moved: the controls of its first moving step
+    assert(t.at(5) == 0 && t.at(1000) == 0);  // after the recording: off
+    t.record(2, 1);  // a step again (never in practice): overwrites, keeps the length
+    assert(t.at(2) == 1 && t.size() == 5);
+    t.record(-1, 3);  // before the movement: not recorded
+    assert(t.at(-1) == 5);
+    t.clear();
+    assert(t.empty() && t.at(0) == 0);
+}
+
 int main() {
     new_cheats();
     money();
@@ -203,5 +234,7 @@ int main() {
     slowmo_cycle_and_names();
     car_factors();
     settings();
+    controls_pack_roundtrip();
+    tape_records_and_plays_back();
     return 0;
 }
