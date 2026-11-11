@@ -10,7 +10,7 @@ on:
       sdk_ref:
         description: "gran-turismo-decomp commit SHA whose include/ the mods build against"
         required: false
-        default: cc6acab6428837a907fa92dd4958ed77711c1fc0
+        default: c2c35300bf5d3c5b5ef124e3ae12476d6fdcff7c
 
 permissions:
   contents: read
