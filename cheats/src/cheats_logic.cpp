@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "cheats_logic.hpp"
 
 #include <cmath>
@@ -37,7 +38,8 @@ void orthonormalise(float *rows) {
 }  // namespace
 
 Kin scale_step(const Kin &pre, const Kin &post, float s) {
-    if (s >= 1.0f || !std::isfinite(s)) return post;
+    if (s == 1.0f || !std::isfinite(s)) return post;
+    s = std::min(s, kMaxScale);  // above 1 the step is extrapolated (a faster AI), bounded: the rows are re-orthonormalised below
     if (s <= 0.0f) return pre;
     float moved2 = 0.0f;
     for (int i = 0; i < kPos; ++i) {
@@ -100,11 +102,6 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
 
 namespace cheats {
 
-bool money_cell_valid(std::uint32_t value, std::uint32_t high, std::uint32_t type) {
-    // +8 is 0x00020100 in a new game and 0x01030000 once the game has saved or loaded (host FACTS); anything else: not the cell.
-    return high == 0u && (type == 0x00020100u || type == 0x01030000u) && value <= kMoneyCap;
-}
-
 std::uint32_t money_after(std::uint32_t value, int direction) {
     constexpr std::uint32_t kStep = 1000000u;
     if (direction < 0) return value > kStep ? value - kStep : 0u;
@@ -129,6 +126,62 @@ bool backup_save(const std::filesystem::path &savedata, long long stamp, std::st
     }
     where = to.string();
     return true;
+}
+
+}  // namespace cheats
+
+namespace cheats {
+
+float factor(AiSpeed s) {
+    switch (s) {
+    case AiSpeed::Half: return 0.5f;
+    case AiSpeed::ThreeQuarter: return 0.75f;
+    case AiSpeed::Fast: return 1.25f;
+    default: return 1.0f;
+    }
+}
+const char *name(AiSpeed s) {
+    switch (s) {
+    case AiSpeed::Half: return "0.5x";
+    case AiSpeed::ThreeQuarter: return "0.75x";
+    case AiSpeed::Fast: return "1.25x";
+    default: return "1x";
+    }
+}
+AiSpeed cycle(AiSpeed s, int direction) {
+    const int n = 4, i = static_cast<int>(s);
+    return static_cast<AiSpeed>(((i + (direction < 0 ? -1 : 1)) % n + n) % n);
+}
+float ai_factor(SlowMo slow, AiSpeed speed, bool freeze_ai) { return freeze_ai ? 0.0f : factor(slow) * factor(speed); }
+
+Kin nitro(const Kin &now, float throttle, float dt) {
+    if (throttle < kNitroThrottle) return now;
+    Kin out = now;
+    const float dv = kNitroAccel * dt;
+    for (int i = 0; i < 3; ++i) out.v[kIxVel + i] += now.v[kIxRows + i] * dv;  // along the forward row
+    out.v[kIxSpeed] += dv;
+    return out;
+}
+
+// The car's up row (basis rows 6..8, FACTS "Car body state": forward, right, up) stands for "up": no world axis is assumed.
+static float up_dot(const Kin &k, const float *v) {
+    return v[0] * k.v[kIxRows + 6] + v[1] * k.v[kIxRows + 7] + v[2] * k.v[kIxRows + 8];
+}
+
+Kin moon(const Kin &before, const Kin &now) {
+    Kin out = now;
+    float change[3];
+    for (int i = 0; i < 3; ++i) change[i] = now.v[kIxVel + i] - before.v[kIxVel + i];
+    const float down = up_dot(now, change);  // < 0: the step took vertical speed away (falling)
+    if (down < 0.0f)
+        for (int i = 0; i < 3; ++i) out.v[kIxVel + i] -= (1.0f - kMoonKeep) * down * now.v[kIxRows + 6 + i];
+    return out;
+}
+
+Kin jump(const Kin &now) {
+    Kin out = now;
+    for (int i = 0; i < 3; ++i) out.v[kIxVel + i] += kJumpSpeed * now.v[kIxRows + 6 + i];
+    return out;
 }
 
 }  // namespace cheats

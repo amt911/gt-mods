@@ -40,17 +40,19 @@
 
 namespace {
 
-constexpr std::uint32_t kStep = 0x0894DD9C;  // a0 = world
-constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
-constexpr std::uint32_t kEntryReplay = 0xA8, kEntryInput = 0x6C;
-constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010, kBody = 8;
+constexpr std::uint32_t kStep = 0x0894DD9C;  // a0 = world (a named hook point comes with API v3 step 3)
 constexpr int kMaxCars = 8;
+constexpr float kStepSeconds = 1.0f / 30.0f;  // the physics step runs at ~30 Hz (FACTS "Cheats")
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
 cheats::Settings g_settings;
 std::atomic<int> g_slow{0};      // cheats::SlowMo as an int
 std::atomic<bool> g_freeze{false};
+std::atomic<int> g_ai_speed{0};  // cheats::AiSpeed as an int
+std::atomic<bool> g_nitro{false}, g_moon{false};
+std::atomic<int> g_jump{0};      // pending jumps (Enter on the row)
+unsigned g_jump_at = 0;          // GT_MOD_CHEATS_JUMP_AT=<step> (checks): one jump at that player-car step
 bool g_log = false;
 unsigned g_log_every = 10;  // GT_MOD_CHEATS_LOG_EVERY: steps between log lines
 std::uint32_t g_player = 0, g_steps = 0;  // the player's car, steps seen with it
@@ -59,9 +61,10 @@ enum class Role { None, Human, Ai };
 
 struct Car {
     int slot = 0;
-    std::uint32_t body = 0;
+    std::uint32_t body = 0;  // the API's car handle
     Role role = Role::None;
-    cheats::Kin now;  // the state at this call's entry
+    GtCarState state{};      // the whole state at this call's entry (pedals included)
+    cheats::Kin now;         // its kinematic part
 };
 
 // What the mod left in each slot's car after the previous call: the start of the step that has just run.
@@ -74,72 +77,67 @@ Base g_base[kMaxCars];
 std::uint64_t g_last_vblank = 0;     // the game's vblank count at the previous call (GtModApi::vblank_index)
 constexpr std::uint64_t kVblankGap = 8;  // calls come every ~2 vblanks; a longer gap means the mod was switched off (or a long pause)
 
-Role classify(GtModCtx *c, std::uint32_t controller_list, int index) {
-    const GtModApi &a = *g_api;
-    const int ix = static_cast<std::int8_t>(a.read8(c, controller_list + 0x24 + index));
-    if (ix < 0) return Role::None;
-    const std::uint32_t entry = a.read32(c, controller_list + 4 + (2 * index + ix) * 4);
-    if (entry == 0) return Role::None;
-    if (a.read32(c, entry) == kPlayerVtable) {
-        // a human entry: live when it is not a replay and reads a pad device; a replay's is left alone (race time only)
-        return a.read8(c, entry + kEntryReplay) == 0 && a.read32(c, entry + kEntryInput) != 0 ? Role::Human : Role::None;
-    }
-    return Role::Ai;
-}
-
-cheats::Kin read_kin(GtModCtx *c, std::uint32_t body) {
+// The kinematic part of the API's car state, in cheats::Kin order (position, basis, speed, velocity, rates, Euler angles).
+cheats::Kin kin_of(const GtCarState &s) {
     cheats::Kin k;
-    for (int i = 0; i < cheats::kFloats; ++i) k.v[i] = g_api->readf(c, body + cheats::kOffsets[i]);
+    int i = 0;
+    for (float v : s.position) k.v[i++] = v;
+    for (float v : s.basis) k.v[i++] = v;
+    k.v[i++] = s.speed;
+    for (float v : s.velocity) k.v[i++] = v;
+    for (float v : s.rates) k.v[i++] = v;
+    for (float v : s.euler) k.v[i++] = v;
     return k;
 }
-void write_kin(GtModCtx *c, std::uint32_t body, const cheats::Kin &k) {
-    for (int i = 0; i < cheats::kFloats; ++i) g_api->writef(c, body + cheats::kOffsets[i], k.v[i]);
+GtCarState with_kin(GtCarState s, const cheats::Kin &k) {
+    int i = 0;
+    for (float &v : s.position) v = k.v[i++];
+    for (float &v : s.basis) v = k.v[i++];
+    s.speed = k.v[i++];
+    for (float &v : s.velocity) v = k.v[i++];
+    for (float &v : s.rates) v = k.v[i++];
+    for (float &v : s.euler) v = k.v[i++];
+    return s;
 }
 
-// Reads the world: fills cars[] (every slot with a readable body) and returns their count, or 0 when this is not a race with exactly
-// one live human. May throw (stale pointers): the caller treats that as "no race".
+// The race through the named SDK (API v3): fills cars[] and returns their count, or 0 when this is not a race with exactly
+// one live human.
 int read_world(GtModCtx *c, std::uint32_t world, Car *cars, std::uint32_t &player_body) {
-    const GtModApi &a = *g_api;
-    const std::uint32_t slots = a.read32(c, world + 4), controller = a.read32(c, world + 0x10);
-    if (slots == 0 || controller == 0) return 0;
-    const std::uint32_t list = a.read32(c, controller + 0xC);
-    if (list == 0) return 0;
-    const int count = static_cast<int>(a.read32(c, world + 8));
+    GtCar list[32];
+    const std::uint32_t total = g_api->race_cars(g_self, c, world, list, 32);
     int n = 0, humans = 0;
     player_body = 0;
-    for (int i = 0; i < count && i < kMaxCars; ++i) {
-        const Role role = classify(c, list, i);
-        if (role == Role::None) continue;
-        const std::uint32_t car = slots + i * kSlotSize + kCarInSlot;
-        const std::uint32_t body = a.read32(c, car + kBody);
-        if (body == 0) continue;
-        if (role == Role::Human) {
+    for (std::uint32_t i = 0; i < total && i < 32 && n < kMaxCars; ++i) {
+        if (list[i].index >= static_cast<std::uint32_t>(kMaxCars)) continue;
+        Car &car = cars[n];
+        if (g_api->car_state(g_self, c, list[i].handle, &car.state) != 0) continue;
+        car.slot = static_cast<int>(list[i].index);
+        car.body = list[i].handle;
+        car.role = list[i].role == 1 ? Role::Human : Role::Ai;
+        car.now = kin_of(car.state);
+        if (car.role == Role::Human) {
             ++humans;
-            player_body = body;
+            player_body = car.body;
         }
-        cars[n].slot = i;
-        cars[n].body = body;
-        cars[n].role = role;
-        cars[n].now = read_kin(c, body);
         ++n;
     }
     return humans == 1 ? n : 0;
 }
 
-void log_cars(GtModCtx *c, const Car *cars, int n, bool active) {  // slow/freeze read OFF/0 until GT_MOD_CHEATS_FROM has passed
+void log_cars(const Car *cars, int n, bool active) {  // slow/freeze read OFF/0 until GT_MOD_CHEATS_FROM has passed
     char line[420];
     int len = std::snprintf(line, sizeof line, "st=%u slow=%s freeze=%d", g_steps, active ? cheats::name(static_cast<cheats::SlowMo>(g_slow.load())) : "OFF", active && g_freeze.load() ? 1 : 0);
     for (int i = 0; i < n; ++i) {  // the player first, then the AI cars in slot order
         if (cars[i].role != Role::Human) continue;
-        len += std::snprintf(line + len, sizeof line - len, " P=%.3f,%.3f,%.3f spd=%.3f acc=%.2f", g_api->readf(c, cars[i].body + 0x10),
-                             g_api->readf(c, cars[i].body + 0x14), g_api->readf(c, cars[i].body + 0x18), g_api->readf(c, cars[i].body + 0x6C4),
-                             g_api->readf(c, cars[i].body + 0x530));
+        const GtCarState &s = cars[i].state;
+        len += std::snprintf(line + len, sizeof line - len, " P=%.3f,%.3f,%.3f spd=%.3f acc=%.2f", s.position[0], s.position[1],
+                             s.position[2], s.speed, s.throttle);
     }
     int ai = 0;
     for (int i = 0; i < n && len < static_cast<int>(sizeof line) - 60; ++i) {
         if (cars[i].role != Role::Ai) continue;
-        len += std::snprintf(line + len, sizeof line - len, " A%d=%.3f,%.3f,%.3f", ai++, g_api->readf(c, cars[i].body + 0x10),
-                             g_api->readf(c, cars[i].body + 0x14), g_api->readf(c, cars[i].body + 0x18));
+        const GtCarState &s = cars[i].state;
+        len += std::snprintf(line + len, sizeof line - len, " A%d=%.3f,%.3f,%.3f", ai++, s.position[0], s.position[1], s.position[2]);
     }
     g_api->log(g_self, line);
 }
@@ -148,11 +146,7 @@ void on_step(GtModCtx *c) {
     Car cars[kMaxCars];
     int n = 0;
     std::uint32_t player_body = 0;
-    try {
-        n = read_world(c, g_api->gpr(c, 4), cars, player_body);
-    } catch (...) {  // unreadable pointers: no race
-        n = 0;
-    }
+    n = read_world(c, g_api->gpr(c, 4), cars, player_body);  // the host checks every pointer
     if (n == 0) {
         g_player = 0;
         g_steps = 0;
@@ -172,28 +166,39 @@ void on_step(GtModCtx *c) {
     ++g_steps;
     const auto slow = static_cast<cheats::SlowMo>(g_slow.load());
     const bool freeze = g_freeze.load();
+    const auto ai_speed = static_cast<cheats::AiSpeed>(g_ai_speed.load());
+    const bool nitro = g_nitro.load(), moon = g_moon.load();
+    if (g_jump_at != 0 && g_steps >= g_jump_at) { g_jump_at = 0; g_jump.store(1); }
+    const bool jump = g_jump.exchange(0) > 0;
     const bool active = static_cast<long>(g_steps) > g_settings.from_step;
-    try {
-        for (int i = 0; i < n; ++i) {
-            Base &base = g_base[cars[i].slot];
-            const bool ai = cars[i].role == Role::Ai;
-            float f = active ? cheats::car_factor(ai, slow, freeze) : 1.0f;
-            if (g_settings.sabotage == 1 && !(ai && freeze)) f = 1.0f;               // sabotage (the check must fail): slow motion does nothing
-            if (g_settings.sabotage == 2 && ai && freeze) f = cheats::factor(slow);  // sabotage: freeze does nothing
-            if (!base.valid || base.body != cars[i].body || f >= 1.0f) {  // nothing to scale: the game's state is the new base
-                base.valid = true;
-                base.body = cars[i].body;
-                base.kin = cars[i].now;
-                continue;
-            }
-            const cheats::Kin out = cheats::scale_step(base.kin, cars[i].now, f);  // the step that has just run, at f of the clock
-            write_kin(c, cars[i].body, out);
-            base.kin = out;
+    for (int i = 0; i < n; ++i) {
+        Base &base = g_base[cars[i].slot];
+        const bool ai = cars[i].role == Role::Ai;
+        float f = active ? (ai ? cheats::ai_factor(slow, ai_speed, freeze) : cheats::factor(slow)) : 1.0f;
+        if (g_settings.sabotage == 1 && !(ai && freeze)) f = 1.0f;               // sabotage (the check must fail): slow motion does nothing
+        if (g_settings.sabotage == 2 && ai && freeze) f = cheats::factor(slow);  // sabotage: freeze does nothing
+        const bool fresh = !base.valid || base.body != cars[i].body;
+        cheats::Kin out = cars[i].now;
+        bool changed = false;
+        if (!fresh && f != 1.0f) {  // the step that has just run, at f of the clock (f > 1 extrapolates: a faster AI)
+            out = cheats::scale_step(base.kin, cars[i].now, f);
+            changed = true;
         }
-        if (g_log && g_steps % g_log_every == 0) log_cars(c, cars, n, active);
-    } catch (...) {
-        for (Base &b : g_base) b.valid = false;
+        if (!ai && active) {  // the player's own cheats
+            if (moon && !fresh) { out = cheats::moon(base.kin, out); changed = true; }
+            if (nitro && cars[i].state.throttle >= cheats::kNitroThrottle) { out = cheats::nitro(out, cars[i].state.throttle, kStepSeconds); changed = true; }
+            if (jump) { out = cheats::jump(out); changed = true; }
+        }
+        if (changed) {
+            const GtCarState next = with_kin(cars[i].state, out);
+            g_api->car_set_state(g_self, c, cars[i].body, &next);
+            cars[i].state = next;  // the log shows what the mod left, as before the port
+        }
+        base.valid = true;
+        base.body = cars[i].body;
+        base.kin = out;
     }
+    if (g_log && g_steps % g_log_every == 0) log_cars(cars, n, active);
     g_api->call_original(c);
 }
 
@@ -213,8 +218,8 @@ bool g_money_backup_failed = false;
 std::uint64_t g_money_test_at = 0;  // GT_MOD_CHEATS_MONEY_AT=<vblank>: press the money row (+1M) once at that vblank
 
 void money_tick(GtModCtx *c) {
-    const std::uint32_t value = g_api->read32(c, cheats::kMoneyCell);
-    const bool valid = cheats::money_cell_valid(value, g_api->read32(c, cheats::kMoneyCell + 4), g_api->read32(c, cheats::kMoneyCell + 8));
+    std::uint32_t value = 0;
+    const bool valid = g_api->money_get(g_self, c, &value) == 0;  // the host checks the cell (API v3)
     g_money_seen.store(valid ? value : 0xFFFFFFFFu);
     if (g_money_test_at != 0 && g_api->vblank_index(g_self) >= g_money_test_at) {  // GT_MOD_CHEATS_MONEY_AT (verification only)
         g_money_test_at = 0;
@@ -239,7 +244,7 @@ void money_tick(GtModCtx *c) {
         g_api->log(g_self, line);
     }
     const std::uint32_t next = cheats::money_after(value, request);
-    g_api->write32(c, cheats::kMoneyCell, next);
+    if (g_api->money_set(g_self, c, next) != 0) return;
     g_money_seen.store(next);
     std::snprintf(line, sizeof line, "ROW money -> %u (was %u)", next, value);
     g_api->log(g_self, line);
@@ -282,10 +287,23 @@ void money_label(GtMod *, char *out, std::uint32_t capacity) {
 }
 void money_activate(GtMod *, int direction) { g_money_request.store(direction < 0 ? -1 : 1); }
 
+void ai_speed_label(GtMod *, char *out, std::uint32_t capacity) {
+    std::snprintf(out, capacity, "AI speed     %s", cheats::name(static_cast<cheats::AiSpeed>(g_ai_speed.load())));
+}
+void ai_speed_activate(GtMod *, int direction) {
+    g_ai_speed.store(static_cast<int>(cheats::cycle(static_cast<cheats::AiSpeed>(g_ai_speed.load()), direction)));
+}
+void nitro_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Nitro        %s (full throttle)", g_nitro.load() ? "ON" : "OFF"); }
+void nitro_activate(GtMod *, int) { g_nitro.store(!g_nitro.load()); }
+void moon_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Moon gravity %s", g_moon.load() ? "ON" : "OFF"); }
+void moon_activate(GtMod *, int) { g_moon.store(!g_moon.load()); }
+void jump_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Jump         ENTER"); }
+void jump_activate(GtMod *, int) { g_jump.store(1); }
+
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version < GT_MOD_API_VERSION_2) return 1;
+    if (api == nullptr || api->version < GT_MOD_API_VERSION_3) return 1;  // named SDK: money and cars (host repo MODS.md, API v3)
     g_api = api;
     g_self = self;
     g_settings = cheats::parse_settings([&](const char *k) { return api->config(self, k); }, [&](const std::string &w) { api->log(self, w.c_str()); });
@@ -294,6 +312,11 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *e = std::getenv("GT_MOD_CHEATS_FROM")) g_settings.from_step = std::atol(e);
     if (const char *e = std::getenv("GT_MOD_CHEATS_CALLGUEST")) g_callguest = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_MONEY_AT")) g_money_test_at = std::strtoull(e, nullptr, 10);
+    // check aids (tools/mod_cheats_check.sh): initial states of the new cheats
+    if (const char *e = std::getenv("GT_MOD_CHEATS_AI_SPEED")) g_ai_speed.store(std::atoi(e) & 3);
+    if (const char *e = std::getenv("GT_MOD_CHEATS_NITRO")) g_nitro.store(*e == '1');
+    if (const char *e = std::getenv("GT_MOD_CHEATS_MOON")) g_moon.store(*e == '1');
+    if (const char *e = std::getenv("GT_MOD_CHEATS_JUMP_AT")) g_jump_at = std::strtoul(e, nullptr, 10);
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG")) g_log = *e != '\0' && std::strcmp(e, "0") != 0;
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG_EVERY"); e != nullptr && std::atoi(e) > 0) g_log_every = static_cast<unsigned>(std::atoi(e));
     g_slow.store(static_cast<int>(g_settings.slow));
@@ -301,6 +324,10 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (api->add_menu_row(self, "slow_motion", slow_label, slow_activate) != 0) return 1;
     if (api->add_menu_row(self, "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
     if (api->add_menu_row(self, "money", money_label, money_activate) != 0) return 1;
+    if (api->add_menu_row(self, "ai_speed", ai_speed_label, ai_speed_activate) != 0) return 1;
+    if (api->add_menu_row(self, "nitro", nitro_label, nitro_activate) != 0) return 1;
+    if (api->add_menu_row(self, "moon", moon_label, moon_activate) != 0) return 1;
+    if (api->add_menu_row(self, "jump", jump_label, jump_activate) != 0) return 1;
     if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
 }

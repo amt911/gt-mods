@@ -35,6 +35,7 @@ constexpr float kJumpMeters = 8.0f;
 // at +-pi), the basis rows re-orthonormalised (a blend of two rotations is not one). s = 1 returns `post` and s = 0 returns `pre`
 // bit for bit; a car that jumped (kJumpMeters) returns `post` unchanged, and a field that is not a number before or after the step
 // (some cars carry NaN in fields the step never uses) keeps the value the game wrote (post).
+constexpr float kMaxScale = 1.5f;  // the largest step factor (extrapolation)
 Kin scale_step(const Kin &pre, const Kin &post, float s);
 
 enum class SlowMo { Off, Half, Quarter };
@@ -46,17 +47,36 @@ bool parse_slowmo(const char *text, SlowMo &out);  // "off", "0.5", "0.25" (and 
 // The factor of one car: the player's follows the slow motion; an AI car's too, or 0 when AI is frozen (it skips its step).
 float car_factor(bool is_ai, SlowMo slow, bool freeze_ai);
 
+// AI speed: the AI cars' step at a factor of the clock (like slow motion, AI only). Above 1 the step is extrapolated.
+enum class AiSpeed { Normal, Half, ThreeQuarter, Fast };
+float factor(AiSpeed s);                   // 1, 0.5, 0.75, 1.25
+const char *name(AiSpeed s);               // "1x", "0.5x", "0.75x", "1.25x"
+AiSpeed cycle(AiSpeed s, int direction);   // Right/Enter: 1x -> 0.5x -> 0.75x -> 1.25x -> 1x; Left back
+// The factor of an AI car: 0 while frozen, else the AI speed times the slow motion.
+float ai_factor(SlowMo slow, AiSpeed speed, bool freeze_ai);
+
+// Nitro: while the throttle is at least kNitroThrottle, the player's velocity and speed grow by kNitroAccel (m/s^2) along the
+// forward basis row, for one step of `dt` seconds.
+constexpr float kNitroThrottle = 0.9f;
+constexpr float kNitroAccel = 6.0f;
+Kin nitro(const Kin &now, float throttle, float dt);
+
+// Moon gravity: of the velocity a step lost along the car's up row (falling), only kMoonKeep is applied; rising is left alone.
+constexpr float kMoonKeep = 0.3f;
+Kin moon(const Kin &before, const Kin &now);
+
+// Jump: kJumpSpeed m/s added along the car's up row, once.
+constexpr float kJumpSpeed = 6.0f;
+Kin jump(const Kin &now);
+
 struct Settings {
     SlowMo slow = SlowMo::Off;
     bool freeze_ai = false;
     long from_step = 0;  // the cheats start at this player-car step (check aid; 0 = at once)
     int sabotage = 0;    // check builds only: 1 = slow motion does nothing, 2 = freeze does nothing
 };
-// Money (host repo FACTS "Money and cars"): the live balance is the word at 0x08F6AC00 of a script value whose high word is 0 and
-// +8 word 0x00020100 (new game) or 0x01030000 (after a save or load); the game's cap is 999,999,999. Enter/Right add 1,000,000, Left takes it away, clamped to [0, cap].
-constexpr std::uint32_t kMoneyCell = 0x08F6AC00u;
+// Money: Enter/Right add 1,000,000, Left takes it away, clamped to [0, kMoneyCap]; the cell itself is the host's (API v3 money_get/set).
 constexpr std::uint32_t kMoneyCap = 999999999u;
-bool money_cell_valid(std::uint32_t value, std::uint32_t high, std::uint32_t type);
 std::uint32_t money_after(std::uint32_t value, int direction);
 
 // A copy of `savedata/UCES01245-GAMEDAT` into `savedata-backups/UCES01245-GAMEDAT-<stamp>` next to the savedata folder (not
