@@ -21,7 +21,6 @@ constexpr float kMaxYawRate = 0.6f;   // rad/s: a faster spin is not a pose to c
 constexpr float kMinHeadingCos = 0.9f; // velocity . forward / speed: the car must be going where it points (no sliding sideways, no backwards)
 constexpr int kMaxPoseAgeSteps = 480; // poses older than this (8 s) are never restored
 constexpr float kJumpMeters = 15.0f;  // a car that moved this far in one step was moved by something else: the ring is stale
-constexpr int kTapReads = 3;          // pad reads a released short Select press is replayed for (the camera button's tap)
 constexpr float kAheadMeters = 40.0f;      // default of `ahead_m`: a pose is preferred when the car's own path after it stays this long within kPathTolerance of the straight line along its heading
 constexpr float kPathTolerance = 2.5f;     // m: lateral distance of the driven path from that line (a car's half width plus margin; the road is ~16 m wide)
 constexpr float kMinAheadMeters = 15.0f;   // fallback: with no preferred pose, the one with the longest such run, at least this long (hairpins); below it nothing is restored
@@ -30,11 +29,10 @@ constexpr unsigned kFakeHeldSteps = 60;  // GT_MOD_RESET_FAKE holds the button t
 int steps_for_ms(float ms);  // ms / kStepMs rounded down (0 for less than one step)
 
 struct Settings {
-    float hold_ms = 500.0f;      // the button must be held this long (0 = fires on the press)
     float cooldown_ms = 1000.0f; // minimum time between two resets
     float rewind_ms = 2500.0f;   // restore a pose at least this old (the newest such one)
     float ahead_m = kAheadMeters; // length of the path after a pose that must stay on its straight line (8 - 100 m)
-    int sabotage = 0;            // check builds only: 1 = rates not zeroed, 2 = newest pose, off-track included, 3 = no rewind (newest good pose), 4 = the short press is not replayed, 5 = the straight-ahead rule off (old pick)
+    int sabotage = 0;            // check builds only: 1 = rates not zeroed, 2 = newest pose, off-track included, 3 = no rewind (newest good pose), 5 = the straight-ahead rule off (old pick)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
@@ -122,23 +120,6 @@ class Resetter {
     std::int64_t last_reset_ = -1;
     bool have_prev_ = false;
     float prev_pos_[3] = {0, 0, 0};
-};
-
-// Select on the pad, seen by the game only as a tap. The pad-read hook feeds it once per read (one sample of the buffer): `sel` the
-// physical Select, `racing` a live player car (steps keep arriving), `now` the player-car step. While racing a held Select is hidden;
-// released before `hold_steps` it is replayed as a tap of kTapReads reads (the game's camera button keeps working), released after
-// it nothing is replayed (the reset fires, the view does not change). Not racing: Select passes through untouched (menus).
-class SelectGate {
-  public:
-    explicit SelectGate(int hold_steps) : hold_steps_(hold_steps) {}
-    bool visible(bool sel, bool racing, std::int64_t now);  // does the game see Select on this read
-    bool held() const { return held_; }                    // the physical Select is down while racing (feeds the reset's hold)
-
-  private:
-    int hold_steps_;
-    bool held_ = false, long_ = false;
-    std::int64_t press_ = 0;
-    int tap_left_ = 0;
 };
 
 // GT_MOD_RESET_FAKE=<step>: the check holds the button from that step (counted in player-car steps) for kFakeHeldSteps steps.

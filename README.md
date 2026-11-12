@@ -49,7 +49,7 @@ Nothing game-derived lives here: only hand-written mod code.
   swings slightly instead of turning in place); the mod opens its own SDL controller handle next to the host's; the look keys
   (J/K/L) also act while the F9 mod menu is open (the SDK cannot tell whether the menu is open).
 - `reset-to-track` - one button puts the player's car back on the road, upright and facing the way it was going, like "recover car" in
-  modern racing games. Button: pad Select held 0.5 s (`hold_ms`), or the keyboard key `reset_keys` (default `R`). While driving it keeps a
+  modern racing games. Action `reset` (cheat device, API 4, category Race): default key `R`, default pad `SELECT@30` (Select held 30 vblanks); rebind from the host's Controls. While driving it keeps a
   ring of "good" poses (all four wheels on asphalt, up vector z > 0.9, faster than 5 m/s, yaw rate <= 0.6 rad/s, velocity within ~25 deg of
   the heading; one every 15 steps). **Straight-ahead rule (0.2.0):** the car restarts from rest along the pose's heading, and a pose that points off the road (a diagonal crossing, a slide: 4/4 asphalt,
   upright, calm, aligned with its velocity, but heading at the edge) used to put it out of bounds again (3 of 4 restores in the reproduction). The ring is searched for the newest old-enough pose whose straight line
@@ -60,7 +60,7 @@ Nothing game-derived lives here: only hand-written mod code.
   was switched off in F9, a long pause) and on a new car; poses older than 8 s are never restored. Allowed everywhere (Time Trial
   included); only the live player car, never a replay. Disabled by default; toggles live from the F9 menu.
   **Select and the camera:** the game uses Select to change the view, so while racing the mod hides a held Select from the game; a press
-  shorter than `hold_ms` is replayed as a tap on release (the camera view still changes), a longer one resets and the view does not change.
+  shorter than the binding's hold is replayed by the host as a late tap on release (the camera view still changes), a longer one resets and the view does not change.
   Outside a race (menus, pause) Select is untouched. **Known limits:** gear, rpm and the previous-position fields are not restored (not
   located; the automatic gearbox relaunches fine from rest, the in-game check requires > 15 m/s with the throttle held after a reset);
   lap counter and timer are not rewound (measured on a mid-lap reset: HUD 0'24.000 -> 0'27.000 over 3 s of play, lap 1/2 unchanged), and a reset that crosses the start/finish line was not tested (no route completes a lap) and may

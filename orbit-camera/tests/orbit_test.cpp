@@ -184,6 +184,16 @@ static void view_yaw_inverts_in_every_view_by_default() {
     s.invert_outside_chase = false;
     assert(view_yaw(90.0f, false, s) == 90.0f);
 }
+static void invert_toggle_flips_both_settings() {
+    Settings s;  // defaults: both inverted
+    Settings t = with_invert_toggle(s, true);
+    assert(!t.invert_in_chase && !t.invert_outside_chase && view_yaw(90.0f, true, t) == 90.0f && view_yaw(90.0f, false, t) == 90.0f);
+    t = with_invert_toggle(s, false);  // not toggled: unchanged
+    assert(t.invert_in_chase && t.invert_outside_chase);
+    s.invert_in_chase = false;  // a mixed configuration flips each flag on its own
+    t = with_invert_toggle(s, true);
+    assert(t.invert_in_chase && !t.invert_outside_chase);
+}
 static void stick_dead_zone_gives_no_look() {
     Settings s;
     Raw r;
@@ -310,6 +320,7 @@ int main() {
     settings_defaults_and_invalid();
     invert_outside_chase_setting();
     view_yaw_inverts_in_every_view_by_default();
+    invert_toggle_flips_both_settings();
     invert_in_chase_setting();
     full_chase_view_by_camera_distance();
     stick_dead_zone_gives_no_look();

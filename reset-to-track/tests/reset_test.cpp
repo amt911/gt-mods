@@ -18,7 +18,6 @@ static Pose pose_at(float x) {
 }
 static Settings steps_settings() {  // 1 step = 1000/60 ms; round numbers in steps
     Settings s;
-    s.hold_ms = 10 * kStepMs;
     s.cooldown_ms = 30 * kStepMs;
     s.rewind_ms = 60 * kStepMs;
     return s;
@@ -32,15 +31,15 @@ static Settings parse(const std::map<std::string, std::string> &m, std::vector<s
 static void settings_defaults_and_invalid() {
     std::vector<std::string> w;
     Settings d = parse({}, &w);
-    assert(w.empty() && d.hold_ms == 500.0f && d.cooldown_ms == 1000.0f && d.rewind_ms == 2500.0f && d.ahead_m == 40.0f && d.sabotage == 0);
-    Settings s = parse({{"hold_ms", "250"}, {"cooldown_ms", "2000"}, {"rewind_ms", "3000"}}, &w);
-    assert(w.empty() && s.hold_ms == 250.0f && s.cooldown_ms == 2000.0f && s.rewind_ms == 3000.0f);
+    assert(w.empty() && d.cooldown_ms == 1000.0f && d.rewind_ms == 2500.0f && d.ahead_m == 40.0f && d.sabotage == 0);
+    Settings s = parse({{"cooldown_ms", "2000"}, {"rewind_ms", "3000"}}, &w);
+    assert(w.empty() && s.cooldown_ms == 2000.0f && s.rewind_ms == 3000.0f);
     w.clear();
-    s = parse({{"hold_ms", "abc"}, {"cooldown_ms", "-1"}, {"rewind_ms", "99999"}}, &w);
-    assert(w.size() == 3 && s.hold_ms == 500.0f && s.cooldown_ms == 1000.0f && s.rewind_ms == 2500.0f);
+    s = parse({{"cooldown_ms", "-1"}, {"rewind_ms", "99999"}}, &w);
+    assert(w.size() == 2 && s.cooldown_ms == 1000.0f && s.rewind_ms == 2500.0f);
     w.clear();
-    s = parse({{"hold_ms", "0"}}, &w);  // an instant press is allowed
-    assert(w.empty() && s.hold_ms == 0.0f);
+    s = parse({{"hold_ms", "abc"}}, &w);  // removed in 0.3.0 (the binding holds the button): ignored, no warning
+    assert(w.empty());
     s = parse({{"rewind_ms", "100"}}, &w);  // below the ring's spacing: invalid
     assert(w.size() == 1 && s.rewind_ms == 2500.0f);
 }
@@ -153,7 +152,7 @@ static void restore_picks_the_pose_from_the_rewind_time() {
     assert(drive(rs, 5, 200.0f, false, &out, off) == 0);
     int fired = 0;
     for (int i = 0; i < 12 && !fired; ++i)
-        if (auto r = rs.step(off, pose_at(205.0f + i), true)) { ++fired; out = r; }
+        if (auto r = rs.step(off, pose_at(205.0f + i), i == 9)) { ++fired; out = r; }
     assert(fired == 1 && out);
     const float x = out->v[0];
     // restored pose is at least `rewind` steps older than the press (press at ~step 214) and the newest such one
@@ -165,22 +164,22 @@ static void cooldown_blocks_a_second_reset_then_allows_it() {
     drive(rs, 200, 0.0f, false, &out);
     int fired = 0;
     float x = 200.0f;  // the car drives on along x (a stationary car would have no path after any pose); the restore is not "honoured" by the test, so no jump check applies
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(x++), true)) { ++fired; out = r; }
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(x++), i == 9)) { ++fired; out = r; }
     assert(fired == 1);
     x = out->v[0];  // the car is where it was put
     rs.step(good_sample(), pose_at(x), false);
     // release, press again at once: the hold completes inside the cooldown -> nothing
-    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), true).has_value();
+    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), i == 9).has_value();
     assert(fired == 1);
     for (int i = 0; i < 30; ++i) rs.step(good_sample(), pose_at(++x), false);
-    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), true).has_value();
+    for (int i = 0; i < 10; ++i) fired += rs.step(good_sample(), pose_at(++x), i == 9).has_value();
     assert(fired == 2);
 }
 static void a_reset_keeps_the_restored_pose_as_the_only_one() {
     Resetter rs(steps_settings());
     std::optional<Pose> out;
     drive(rs, 200, 0.0f, false, &out);
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f), true)) out = r;
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f), i == 9)) out = r;
     assert(out);
     const float first = out->v[0];
     assert(rs.recorded() == 1);
@@ -189,7 +188,7 @@ static void a_reset_keeps_the_restored_pose_as_the_only_one() {
     for (int i = 0; i < 60; ++i) rs.step(rest, pose_at(first), false);
     assert(rs.recorded() == 1);
     out.reset();
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(rest, pose_at(first), true)) out = r;  // second press after the cooldown
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(rest, pose_at(first), i == 9)) out = r;  // second press after the cooldown
     assert(out && out->v[0] == first);
 }
 static void losing_the_car_clears_everything() {
@@ -210,7 +209,7 @@ static void sabotage_newest_records_everything_and_restores_the_latest() {
     off.wheels_on_asphalt = 0;
     off.speed = 0.0f;
     for (int i = 0; i < 40; ++i) rs.step(off, pose_at(float(i)), false);
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(off, pose_at(40.0f + i), true)) out = r;
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(off, pose_at(40.0f + i), i == 9)) out = r;
     assert(out && out->v[0] <= 49.0f && out->v[0] >= 40.0f);  // the pose of step 45  // a pose from within a few steps: the off-track one
 }
 static void fake_parsing() {
@@ -256,7 +255,7 @@ static void our_own_restore_is_not_a_jump() {
     std::optional<Pose> out;
     drive(rs, 200, 0.0f, false, &out);
     std::optional<Pose> r;
-    for (int i = 0; i < 10; ++i) if (auto x = rs.step(good_sample(), pose_at(199.0f), true)) r = x;
+    for (int i = 0; i < 10; ++i) if (auto x = rs.step(good_sample(), pose_at(199.0f), i == 9)) r = x;
     assert(r && r->v[0] < 199.0f - 30.0f);
     rs.step(good_sample(), pose_at(r->v[0]), false);  // the car is where we put it: the ring keeps the restored pose
     assert(rs.recorded() == 1);
@@ -276,48 +275,9 @@ static void sabotage_no_rewind_takes_the_newest_good_pose() {
     Resetter rs(s);
     std::optional<Pose> out;
     drive(rs, 200, 0.0f, false, &out);
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f), true)) out = r;
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f), i == 9)) out = r;
     assert(out && out->v[0] >= 185.0f);  // not ~60 steps back
 }
-// --- select gate -------------------------------------------------------------------------------------------------------
-static void gate_hides_a_held_select_and_taps_on_a_short_release() {
-    SelectGate g(30);
-    assert(!g.visible(true, true, 100) && g.held());
-    assert(!g.visible(true, true, 110));
-    // released after 12 steps: the game sees a tap of kTapReads reads, then nothing
-    assert(g.visible(false, true, 112) && !g.held());
-    assert(g.visible(false, true, 112) && g.visible(false, true, 113));
-    assert(!g.visible(false, true, 113));
-}
-static void gate_long_hold_gives_no_tap() {
-    SelectGate g(30);
-    for (int i = 0; i < 40; ++i) assert(!g.visible(true, true, 100 + i));
-    assert(!g.visible(false, true, 140));
-    assert(!g.visible(false, true, 141));
-}
-static void gate_passes_everything_when_not_racing() {
-    SelectGate g(30);
-    assert(g.visible(true, false, 0) && !g.held());
-    assert(!g.visible(false, false, 1));
-    // a press that starts racing and ends in a menu: no phantom tap afterwards
-    assert(!g.visible(true, true, 10));
-    assert(g.visible(true, false, 11));
-    assert(!g.visible(false, false, 12));
-}
-static void gate_press_replaces_a_pending_tap() {
-    SelectGate g(30);
-    g.visible(true, true, 0);
-    assert(g.visible(false, true, 5));  // tap starts
-    assert(!g.visible(true, true, 6));  // pressed again: hidden, no leftover tap
-    assert(!g.visible(true, true, 40));
-    assert(!g.visible(false, true, 41) && !g.visible(false, true, 42));  // that press was long
-}
-static void gate_zero_hold_is_always_long() {
-    SelectGate g(0);
-    assert(!g.visible(true, true, 0));
-    assert(!g.visible(false, true, 1));
-}
-
 // --- straight-ahead rule (pick_clear) ---------------------------------------------------------------------------------------------
 // Poses every 15 steps along a path, heading given per pose (yaw; forward = (-sin yaw, cos yaw)).
 static Pose pose_xy(float x, float y, float yaw) {
@@ -371,7 +331,7 @@ static void a_restored_pose_is_pinned_and_the_rule_off_sabotage_takes_the_old_pi
     Resetter rs(s);
     std::optional<Pose> out;
     drive(rs, 200, 0.0f, false, &out);
-    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f + i), true)) out = r;
+    for (int i = 0; i < 10; ++i) if (auto r = rs.step(good_sample(), pose_at(199.0f + i), i == 9)) out = r;
     assert(out && !rs.refused());
     // a diverging pose among straight ones: the rule skips it, the sabotage (5) restores it
     for (int sabotage : {0, 5}) {
@@ -384,7 +344,7 @@ static void a_restored_pose_is_pinned_and_the_rule_off_sabotage_takes_the_old_pi
             if (i >= 134 && i < 150) p.v[14] = 0.0f;  // the pose recorded at step 135 points along +y while the car drives +x
             if (auto r = q.step(good_sample(), p, false)) got = r;
         }
-        for (int i = 0; i < 10; ++i) if (auto r = q.step(good_sample(), pose_at(200.0f + i), true)) got = r;
+        for (int i = 0; i < 10; ++i) if (auto r = q.step(good_sample(), pose_at(200.0f + i), i == 9)) got = r;
         assert(got);
         if (sabotage == 0) assert(got->v[14] != 0.0f);
         else assert(got->v[14] == 0.0f);  // 200 - 60 steps -> the pose of step 135, newest one old enough
@@ -396,7 +356,7 @@ static void a_press_with_nothing_eligible_is_refused_and_says_so() {
     bool refused = false;
     for (int i = 0; i < 100; ++i) rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), false);  // a car standing still: no path after any pose
     for (int i = 0; i < 12; ++i) {
-        if (auto r = rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), true)) out = r;
+        if (auto r = rs.step(good_sample(), pose_xy(0.0f, 0.0f, 0.0f), i == 9)) out = r;
         refused = refused || rs.refused();
     }
     assert(!out && refused);
@@ -417,11 +377,6 @@ int main() {
     our_own_restore_is_not_a_jump();
     invalidate_forgets_the_ring_and_the_last_position();
     sabotage_no_rewind_takes_the_newest_good_pose();
-    gate_hides_a_held_select_and_taps_on_a_short_release();
-    gate_long_hold_gives_no_tap();
-    gate_passes_everything_when_not_racing();
-    gate_press_replaces_a_pending_tap();
-    gate_zero_hold_is_always_long();
     settings_defaults_and_invalid();
     ms_to_steps();
     good_pose_predicate();

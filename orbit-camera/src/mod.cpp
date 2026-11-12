@@ -1,4 +1,4 @@
-// orbit-camera: right-stick orbit camera (Gran Turismo 7 style) for the player's car (gran-turismo-decomp mod SDK, API 1).
+// orbit-camera: right-stick orbit camera (Gran Turismo 7 style) for the player's car (gran-turismo-decomp mod SDK, API 4).
 //
 // How the game draws the view (docs/FACTS.md of the host repo, "orbit camera"): the GE never receives a view matrix; the game
 // folds view x model on the CPU and uploads the product per object as the WORLD matrix: 0x08B59508 (a GU class method, this =
@@ -24,6 +24,7 @@
 #include "orbit_math.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -58,7 +59,9 @@ constexpr int kStaleFrames = 10;  // spec: the step ran within the last 10 frame
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
-orbit::Settings g_settings;
+orbit::Settings g_settings;       // the effective settings: g_base with the invert action applied (written by the step hook only)
+orbit::Settings g_base;           // as configured
+std::atomic<bool> g_inverted{false};  // the `invert` action's toggle (vblank tick)
 std::optional<std::pair<float, float>> g_fake;
 bool g_log = false;
 
@@ -97,7 +100,10 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world) {
     return humans == 1 ? found : 0;
 }
 
+void invert_action(GtMod *, GtModCtx *) { g_inverted = !g_inverted.load(); }
+
 void on_step(GtModCtx *c) {
+    g_settings = orbit::with_invert_toggle(g_base, g_inverted.load());
     g_gate.on_step();
     ++g_steps;
     g_player_car = find_player_car(c, g_api->gpr(c, 4));
@@ -226,15 +232,17 @@ void on_view_load(GtModCtx *c) {
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version != GT_MOD_API_VERSION) return 1;
+    if (api == nullptr || api->version < GT_MOD_API_VERSION_4) return 1;
     g_api = api;
     g_self = self;
     g_settings = orbit::parse_settings([&](const char *k) { return api->config(self, k); },
                                        [&](const std::string &w) { api->log(self, w.c_str()); });
+    g_base = g_settings;
     orbit::configure_keys(api->config(self, "look_left_keys"), api->config(self, "look_right_keys"), api->config(self, "look_back_keys"));
     g_fake = orbit::parse_fake(std::getenv("GT_MOD_CAMERA_FAKE"));
     const char *log = std::getenv("GT_MOD_CAMERA_LOG");
     g_log = log != nullptr && *log != '\0' && std::string(log) != "0";
+    if (api->add_action(self, "invert", "Invert camera", "Camera", invert_action, "", "") != 0) return 1;
     if (api->hook(self, kStep, on_step) != 0) return 1;
     if (api->hook(self, kSceneRefresh, on_scene_refresh) != 0) return 1;
     if (api->hook(self, kUpload, on_upload) != 0) return 1;
