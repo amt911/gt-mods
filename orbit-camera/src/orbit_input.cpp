@@ -36,6 +36,14 @@ void read_setting(const std::function<const char *(const char *)> &get, const st
 }
 }  // namespace
 
+Settings with_invert_toggle(Settings s, bool toggled) {
+    if (toggled) {
+        s.invert_in_chase = !s.invert_in_chase;
+        s.invert_outside_chase = !s.invert_outside_chase;
+    }
+    return s;
+}
+
 Settings parse_settings(const std::function<const char *(const char *)> &get,
                         const std::function<void(const std::string &)> &warn) {
     Settings s;

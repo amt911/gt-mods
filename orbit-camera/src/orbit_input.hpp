@@ -17,6 +17,9 @@ struct Settings {
     bool invert_in_chase = true;       // the far chase view mirrored too (user, 2026-11-08)
 };
 
+// The settings with both invert flags flipped when `toggled` (the cheat device's `invert` action: stick mirroring on / off at run time).
+Settings with_invert_toggle(Settings s, bool toggled);
+
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
 Settings parse_settings(const std::function<const char *(const char *)> &get,
                         const std::function<void(const std::string &)> &warn);

@@ -35,7 +35,6 @@ int steps_for_ms(float ms) {
 Settings parse_settings(const std::function<const char *(const char *)> &get,
                         const std::function<void(const std::string &)> &warn) {
     Settings s;
-    read_setting(get, warn, "hold_ms", 0.0f, 5000.0f, &s.hold_ms);
     read_setting(get, warn, "cooldown_ms", 0.0f, 30000.0f, &s.cooldown_ms);
     read_setting(get, warn, "ahead_m", 8.0f, 100.0f, &s.ahead_m);
     // Below one ring interval the "pose that old" would not exist; past the ring's span it could never be found.
@@ -118,7 +117,7 @@ const Pose *PoseRing::pick_clear(std::int64_t now, int min_age, int max_age, flo
 }
 
 Resetter::Resetter(const Settings &s)
-    : s_(s), rewind_steps_(s.sabotage == 3 ? 0 : steps_for_ms(s.rewind_ms)), cooldown_steps_(steps_for_ms(s.cooldown_ms)), hold_(steps_for_ms(s.hold_ms)),
+    : s_(s), rewind_steps_(s.sabotage == 3 ? 0 : steps_for_ms(s.rewind_ms)), cooldown_steps_(steps_for_ms(s.cooldown_ms)), hold_(0)  /* the host's binding already held the button */,
       ring_(kRingCapacity) {}
 
 void Resetter::lose_car() {
@@ -126,7 +125,7 @@ void Resetter::lose_car() {
     now_ = 0;
     last_reset_ = -1;
     have_prev_ = false;
-    hold_ = HoldDetector(steps_for_ms(s_.hold_ms));
+    hold_ = HoldDetector(0);
 }
 
 std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current, bool button_held) {
@@ -167,36 +166,5 @@ std::optional<std::uint32_t> parse_fake(const char *env) {
 }
 
 bool fake_held(std::uint32_t step, std::uint32_t from) { return step >= from && step < from + kFakeHeldSteps; }
-
-}  // namespace reset
-
-namespace reset {
-bool SelectGate::visible(bool sel, bool racing, std::int64_t now) {
-    if (!racing) {  // a menu, the pause screen, no player car: the game gets the pad as it is
-        held_ = long_ = false;
-        tap_left_ = 0;
-        return sel;
-    }
-    if (sel) {
-        if (!held_) {
-            held_ = true;
-            long_ = false;
-            press_ = now;
-            tap_left_ = 0;
-        }
-        if (now - press_ >= hold_steps_) long_ = true;
-        return false;
-    }
-    if (held_) {
-        held_ = false;
-        if (!long_) tap_left_ = kTapReads;
-        long_ = false;
-    }
-    if (tap_left_ > 0) {
-        --tap_left_;
-        return true;
-    }
-    return false;
-}
 
 }  // namespace reset

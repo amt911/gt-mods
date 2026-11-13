@@ -1,15 +1,13 @@
 id = "reset-to-track"
 name = "Reset to track"
-version = "0.2.0"
+version = "0.3.0"
 library = "libreset_to_track.so"
-api = 1
+api = 4
 enabled = false
 
 [settings]
-hold_ms = 500
 cooldown_ms = 1000
 rewind_ms = 2500
-reset_keys = "R"
 # a ring pose is preferred when the car's own path after it stays within 2.5 m of the straight line along its heading for this many metres
 # (a pose pointing off the road would put the car out of bounds again); with none, the longest such run of at least 15 m; else nothing is restored
 ahead_m = 40
