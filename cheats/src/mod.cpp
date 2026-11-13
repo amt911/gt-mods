@@ -58,6 +58,7 @@ bool g_log = false;
 unsigned g_log_every = 10;  // GT_MOD_CHEATS_LOG_EVERY: steps between log lines
 std::uint32_t g_player = 0, g_steps = 0;  // the player's car, steps seen with it
 bool g_replay = false;      // the player's car is in its replay
+std::atomic<bool> g_replay_ui{false};  // the same, for the menu (labels and keys come from other threads)
 long g_moved_at = -1;       // the step at which the player's car first moved (> 1 m/s): the tape's step 0
 cheats::Tape g_tape;        // the live race's controls, played back in its replay
 
@@ -172,6 +173,7 @@ void on_step(GtModCtx *c) {
         }
         g_player = player_body;
         g_replay = replay;
+        g_replay_ui.store(g_replay);
         g_steps = 0;
         g_moved_at = -1;
         for (Base &b : g_base) b.valid = false;
@@ -297,18 +299,27 @@ void on_tick(GtModCtx *c) {
     g_api->log(g_self, line);
 }
 
+// In a replay the race cheats play back what was recorded live: the menu shows that and changes nothing (spec §3).
+constexpr const char *kReplayRecorded = "(replay: recorded)";
+bool in_replay() { return g_replay_ui.load(); }
+
 void slow_label(GtMod *, char *out, std::uint32_t capacity) {
+    if (in_replay()) { std::snprintf(out, capacity, "Slow motion  %s", kReplayRecorded); return; }
     std::snprintf(out, capacity, "Slow motion  %s", cheats::name(static_cast<cheats::SlowMo>(g_slow.load())));
 }
 void slow_activate(GtMod *, int direction) {
+    if (in_replay()) return;
     const cheats::SlowMo next = cheats::cycle(static_cast<cheats::SlowMo>(g_slow.load()), direction);
     g_slow.store(static_cast<int>(next));
     char line[80];
     std::snprintf(line, sizeof line, "ROW slow_motion -> %s", cheats::name(next));
     g_api->log(g_self, line);
 }
-void freeze_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Freeze AI    %s", g_freeze.load() ? "ON" : "OFF"); }
+void freeze_label(GtMod *, char *out, std::uint32_t capacity) {
+    std::snprintf(out, capacity, "Freeze AI    %s", in_replay() ? kReplayRecorded : g_freeze.load() ? "ON" : "OFF");
+}
 void freeze_activate(GtMod *, int) {
+    if (in_replay()) return;
     const bool next = !g_freeze.load();
     g_freeze.store(next);
     char line[80];
@@ -325,22 +336,41 @@ void money_label(GtMod *, char *out, std::uint32_t capacity) {
 void money_activate(GtMod *, int direction) { g_money_request.store(direction < 0 ? -1 : 1); }
 
 void ai_speed_label(GtMod *, char *out, std::uint32_t capacity) {
-    std::snprintf(out, capacity, "AI speed     %s", cheats::name(static_cast<cheats::AiSpeed>(g_ai_speed.load())));
+    std::snprintf(out, capacity, "AI speed     %s", in_replay() ? kReplayRecorded : cheats::name(static_cast<cheats::AiSpeed>(g_ai_speed.load())));
 }
 void ai_speed_activate(GtMod *, int direction) {
+    if (in_replay()) return;
     g_ai_speed.store(static_cast<int>(cheats::cycle(static_cast<cheats::AiSpeed>(g_ai_speed.load()), direction)));
 }
-void nitro_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Nitro        %s (full throttle)", g_nitro.load() ? "ON" : "OFF"); }
-void nitro_activate(GtMod *, int) { g_nitro.store(!g_nitro.load()); }
-void moon_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Moon gravity %s", g_moon.load() ? "ON" : "OFF"); }
-void moon_activate(GtMod *, int) { g_moon.store(!g_moon.load()); }
-void jump_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Jump         ENTER"); }
-void jump_activate(GtMod *, int) { g_jump.store(1); }
+void nitro_label(GtMod *, char *out, std::uint32_t capacity) {
+    if (in_replay()) { std::snprintf(out, capacity, "Nitro        %s", kReplayRecorded); return; }
+    std::snprintf(out, capacity, "Nitro        %s (full throttle)", g_nitro.load() ? "ON" : "OFF");
+}
+void nitro_activate(GtMod *, int) {
+    if (in_replay()) return;
+    const bool next = !g_nitro.load();
+    g_nitro.store(next);
+    g_api->log(g_self, next ? "ROW nitro -> ON" : "ROW nitro -> OFF");
+}
+void nitro_action(GtMod *self, GtModCtx *) {  // its hotkey (default Ctrl+N / L+TRIANGLE)
+    if (g_settings.sabotage == 4) return;  // sabotage (tools/mod_cheats_check.sh --sabotage-hotkey must FAIL): the hotkey does nothing
+    nitro_activate(self, 0);
+}
+void moon_label(GtMod *, char *out, std::uint32_t capacity) {
+    std::snprintf(out, capacity, "Moon gravity %s", in_replay() ? kReplayRecorded : g_moon.load() ? "ON" : "OFF");
+}
+void moon_activate(GtMod *, int) {
+    if (in_replay()) return;
+    g_moon.store(!g_moon.load());
+}
+void jump_action(GtMod *, GtModCtx *) {  // Enter on its menu entry, or its hotkey (default Ctrl+J / R+TRIANGLE); dropped in a replay
+    if (!in_replay()) g_jump.store(1);
+}
 
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version < GT_MOD_API_VERSION_3) return 1;  // named SDK: money and cars (host repo MODS.md, API v3)
+    if (api == nullptr || api->version < GT_MOD_API_VERSION_4) return 1;  // named SDK (v3) + the cheat device's actions and entries (v4)
     g_api = api;
     g_self = self;
     g_settings = cheats::parse_settings([&](const char *k) { return api->config(self, k); }, [&](const std::string &w) { api->log(self, w.c_str()); });
@@ -358,13 +388,15 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG_EVERY"); e != nullptr && std::atoi(e) > 0) g_log_every = static_cast<unsigned>(std::atoi(e));
     g_slow.store(static_cast<int>(g_settings.slow));
     g_freeze.store(g_settings.freeze_ai);
-    if (api->add_menu_row(self, "slow_motion", slow_label, slow_activate) != 0) return 1;
-    if (api->add_menu_row(self, "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
-    if (api->add_menu_row(self, "money", money_label, money_activate) != 0) return 1;
-    if (api->add_menu_row(self, "ai_speed", ai_speed_label, ai_speed_activate) != 0) return 1;
-    if (api->add_menu_row(self, "nitro", nitro_label, nitro_activate) != 0) return 1;
-    if (api->add_menu_row(self, "moon", moon_label, moon_activate) != 0) return 1;
-    if (api->add_menu_row(self, "jump", jump_label, jump_activate) != 0) return 1;
+    // The cheat device (host API v4): race cheats in Race, money in Money & garage, nitro and jump also as hotkeys.
+    if (api->add_entry(self, "Race", "slow_motion", slow_label, slow_activate) != 0) return 1;
+    if (api->add_entry(self, "Race", "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
+    if (api->add_entry(self, "Race", "ai_speed", ai_speed_label, ai_speed_activate) != 0) return 1;
+    if (api->add_entry(self, "Race", "nitro", nitro_label, nitro_activate) != 0) return 1;
+    if (api->add_entry(self, "Race", "moon", moon_label, moon_activate) != 0) return 1;
+    if (api->add_action(self, "nitro", "Nitro on/off", "Race", nitro_action, "Ctrl+N", "L+TRIANGLE") != 0) return 1;
+    if (api->add_action(self, "jump", "Jump", "Race", jump_action, "Ctrl+J", "R+TRIANGLE") != 0) return 1;
+    if (api->add_entry(self, "Money & garage", "money", money_label, money_activate) != 0) return 1;
     if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
 }
