@@ -1,0 +1,16 @@
+id = "deformation"
+name = "Crash deformation"
+version = "0.1.0"
+library = "libdeformation.so"
+api = 5
+enabled = false
+
+[settings]
+# velocity change of the player car in ONE physics step (m/s) above which a hit counts
+threshold = 4.0
+# dent depth, in fractions of the body's size, per m/s of velocity change above the threshold
+depth_per_ms = 0.01
+# radius of the dent around the contact point, in fractions of the body's size
+radius = 0.25
+# largest total dent of any vertex, in fractions of the body's size (no inside-out body)
+cap = 0.12
