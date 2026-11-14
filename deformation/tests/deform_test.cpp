@@ -1,6 +1,7 @@
 #include "deform_logic.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -52,6 +53,25 @@ int main() {
     Body e = make_body({32767, 0, 0, -32768, 0, 0});
     apply_dent(e, {32767, 0, 0}, {1, 0, 0}, 0.5f, p);
     assert(e.positions[0] == 32767);
+    // smooth: even a hit far above the cap leaves no cliff between neighbours (a row of vertices 100 units apart), and nothing passes the cap
+    {
+        std::vector<std::int16_t> row;
+        for (int i = 0; i < 21; ++i) { row.push_back(static_cast<std::int16_t>(-1000 + 100 * i)); row.push_back(0); row.push_back(0); }
+        row.push_back(-1000); row.push_back(1000); row.push_back(0);  // gives the body a size of 2000 in y
+        Body f = make_body(row);
+        Params q;
+        q.radius = 0.5f;
+        q.cap = 0.12f;
+        apply_dent(f, {1000, 0, 0}, {0, -1, 0}, 3.0f, q);
+        float biggest_jump = 0, biggest = 0;
+        for (int i = 0; i < 21; ++i) {
+            const float moved = static_cast<float>(f.original[3 * i + 1] - f.positions[3 * i + 1]);
+            biggest = std::max(biggest, moved);
+            if (i > 0) biggest_jump = std::max(biggest_jump, std::fabs(moved - static_cast<float>(f.original[3 * (i - 1) + 1] - f.positions[3 * (i - 1) + 1])));
+        }
+        assert(biggest <= q.cap * f.size + 1.0f && biggest > 0.8f * q.cap * f.size);  // reaches nearly the cap, never beyond
+        assert(biggest_jump < 0.3f * q.cap * f.size);                                   // dent_is_smooth: no spike or cliff between neighbours
+    }
     std::puts("deformation tests passed");
     return 0;
 }

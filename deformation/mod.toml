@@ -9,17 +9,17 @@ enabled = false
 # velocity change of the player car in ONE physics step (m/s) above which a hit counts
 threshold = 4.0
 # dent depth, in fractions of the body's size, per m/s of velocity change above the threshold
-depth_per_ms = 0.01
+depth_per_ms = 0.04
 # radius of the dent around the contact point, in fractions of the body's size
-radius = 0.25
+radius = 0.5
 # largest total dent of any vertex, in fractions of the body's size (no inside-out body)
-cap = 0.12
+cap = 0.3
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
 min_vertices = 100
 # which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it); the game's models are Y-up
 forward_axis = "z"
 forward_sign = 1
 right_axis = "x"
-right_sign = 1
+right_sign = -1
 up_axis = "y"
 up_sign = 1

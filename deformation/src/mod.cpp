@@ -1,10 +1,10 @@
 // Crash deformation (spec docs/superpowers/specs/2026-11-07-crash-deformation-design.md in gran-turismo-decomp), mod API v5, no guest address.
 //
-// How it works: the car-draw hook names each car's model (the container of its parts); a hit of the player car (velocity change of one step,
-// `car_impact`) is queued; on the next vblank tick the player's part blobs are copied once (`mesh_copy`: copy-on-write, so an AI car of the
-// same model would stay clean; a model shared by two cars is never dented), the copies are dented around the contact (deform_logic) and the
-// mesh-draw hook redirects the originals to the copies. Switching the mod off stops the redirects (the originals were never touched);
-// when no world step has run for a while (the race is over) the copies are released.
+// How it works: the car-draw hook names each car's model (the container of its parts; every car has its own, FACTS "Car to model link"); a hit
+// of the player car (velocity change of one step, `car_impact`) is queued; on the next vblank tick every vertex run of the player's model (model_runs:
+// parts with several vertex arrays included) is read once, the vertices near the contact are pushed in (deform_logic) IN PLACE in the model, and
+// the originals are kept. They are written back when no world step has run for a while (the race is over) and when the mod is switched off
+// (on_switch_off). A model drawn by more than one car is never dented.
 #include "gt_mod/gt_mod_api.h"
 
 #include "deform_logic.hpp"
@@ -22,13 +22,14 @@ const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
 deform::Params g_params;
 uint32_t g_min_vertices = 100;
-uint32_t g_redirects = 0;
 int g_axis[3] = {2, 0, 1};      // model axis (0 x, 1 y, 2 z) of the body's forward, right, up
 float g_sign[3] = {1.f, 1.f, 1.f};
 
 struct Part {
-    uint32_t copy = 0;
+    uint32_t blob = 0;
+    uint32_t run = 0;
     deform::Body body;
+    std::vector<int16_t> written;  // what the mod last wrote, to restore only vertices still holding it
 };
 struct Hit {
     float contact[3];  // body frame (forward, right, up), unit: where on the body the hit landed
@@ -41,7 +42,7 @@ uint64_t g_last_step_vblank = 0;
 std::map<uint32_t, std::set<uint32_t>> g_model_cars;  // model -> the cars seen drawing it
 uint32_t g_player_model = 0;
 std::vector<Hit> g_pending;
-std::map<uint32_t, Part> g_parts;          // original blob -> its dented copy
+std::vector<Part> g_parts;                 // the player's vertex runs, dented in place
 unsigned g_steps = 0;
 
 float setting(const char *key, float fallback) {
@@ -85,57 +86,62 @@ void on_car_draw(GtModCtx *ctx) {
     uint32_t car = 0, model = 0;
     if (g_api->draw_car_model(g_self, ctx, &car, &model) == 0) {
         g_model_cars[model].insert(car);
-        if (car == g_player && g_player != 0u) g_player_model = model;
-    }
-    g_api->call_original(ctx);
-}
-
-void on_mesh_draw(GtModCtx *ctx) {
-    if (!g_parts.empty()) {
-        const uint32_t seen = g_api->draw_mesh_blob(ctx);
-        const auto it = g_parts.find(seen);
-        if (it != g_parts.end()) {
-            g_api->draw_mesh_redirect(ctx, it->second.copy);
-            if (++g_redirects == 1u) logf("REDIRECT first draw of a copy", 0);
+        if (car == g_player && g_player != 0u) {
+            if (model != g_player_model) logf("PLAYER model=%08x", model);
+            g_player_model = model;
         }
     }
     g_api->call_original(ctx);
 }
 
-void release_all(GtModCtx *ctx) {
-    for (auto &part : g_parts) g_api->mesh_release(g_self, ctx, part.second.copy);
-    if (!g_parts.empty()) logf("RELEASE parts=%u", static_cast<unsigned>(g_parts.size()));
+void restore_all(GtModCtx *ctx) {
+    unsigned restored = 0;
+    for (Part &part : g_parts) {
+        for (size_t v = 0; v < part.body.original.size() / 3u; ++v) {
+            int16_t now[3];
+            // only what the mod wrote: freed and reused memory is left alone
+            if (g_api->run_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), now) != 0) break;
+            if (std::memcmp(now, &part.written[3 * v], 6) != 0 || std::memcmp(now, &part.body.original[3 * v], 6) == 0) continue;
+            g_api->run_set_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.original[3 * v]);
+            ++restored;
+        }
+    }
+    if (!g_parts.empty()) logf("RESTORE runs=%u vertices=%u", static_cast<unsigned>(g_parts.size()), restored);
     g_parts.clear();
-    g_redirects = 0;
+}
+
+void restore_all_off(GtModCtx *ctx) {
+    restore_all(ctx);
+    g_pending.clear();
+}
+
+void release_all(GtModCtx *ctx) {
+    restore_all(ctx);
     g_pending.clear();
     g_model_cars.clear();
     g_player_model = 0;
 }
 
-// Copies the player's parts once (tick only: mesh_copy calls the game's allocator).
-bool make_copies(GtModCtx *ctx) {
+// Reads the player's vertex runs once (tick only).
+bool capture(GtModCtx *ctx) {
     const auto cars = g_model_cars.find(g_player_model);
     if (cars == g_model_cars.end() || cars->second.size() != 1u) return false;  // shared by another car: never dent
-    uint32_t blobs[64];
-    const uint32_t n = g_api->model_blobs(g_self, ctx, g_player_model, blobs, 64);
+    std::vector<GtVertexRun> runs(256);
+    const uint32_t n = g_api->model_runs(g_self, ctx, g_player_model, runs.data(), static_cast<uint32_t>(runs.size()));
     for (uint32_t i = 0; i < n; ++i) {
-        GtMeshInfo info;
-        if (g_api->mesh_info(g_self, ctx, blobs[i], &info) != 0) continue;
-        if (info.vertex_count < g_min_vertices) continue;
-        Part part;
-        if (g_api->mesh_copy(g_self, ctx, blobs[i], &part.copy) != 0) continue;
-        // the copy's vertices are the originals' (a PRIM strip may repeat a vertex: each index is read and written on its own)
-        std::vector<int16_t> positions(3u * info.vertex_count);
+        if (runs[i].count < g_min_vertices) continue;
+        std::vector<int16_t> positions(3u * runs[i].count);
         bool ok = true;
-        for (uint32_t v = 0; v < info.vertex_count && ok; ++v) ok = g_api->mesh_vertex(g_self, ctx, part.copy, v, &positions[3u * v]) == 0;
-        if (!ok) {
-            g_api->mesh_release(g_self, ctx, part.copy);
-            continue;
-        }
+        for (uint32_t v = 0; v < runs[i].count && ok; ++v) ok = g_api->run_vertex(g_self, ctx, runs[i].blob, runs[i].run, v, &positions[3u * v]) == 0;
+        if (!ok) continue;
+        Part part;
+        part.blob = runs[i].blob;
+        part.run = runs[i].run;
         part.body = deform::make_body(positions);
-        g_parts[blobs[i]] = std::move(part);
+        part.written = positions;
+        g_parts.push_back(std::move(part));
     }
-    logf("COPY parts=%u of=%u", static_cast<unsigned>(g_parts.size()), n);
+    logf("CAPTURE runs=%u of=%u", static_cast<unsigned>(g_parts.size()), n);
     return !g_parts.empty();
 }
 
@@ -147,15 +153,16 @@ void apply_hit(GtModCtx *ctx, const Hit &hit) {
     contact = {c[0] * 32767.f, c[1] * 32767.f, c[2] * 32767.f};
     inward = {-c[0], -c[1], -c[2]};
     unsigned moved_total = 0;
-    for (auto &entry : g_parts) {
-        Part &part = entry.second;
+    for (Part &part : g_parts) {
         const std::vector<int16_t> before = part.body.positions;
         const size_t moved = deform::apply_dent(part.body, contact, inward, hit.strength, g_params);
         if (moved == 0) continue;
         moved_total += static_cast<unsigned>(moved);
         for (size_t v = 0; v < part.body.dented.size(); ++v)
-            if (std::memcmp(&before[3 * v], &part.body.positions[3 * v], 6) != 0)
-                g_api->mesh_set_vertex(g_self, ctx, part.copy, static_cast<uint32_t>(v), &part.body.positions[3 * v]);
+            if (std::memcmp(&before[3 * v], &part.body.positions[3 * v], 6) != 0) {
+                g_api->run_set_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.positions[3 * v]);
+                std::memcpy(&part.written[3 * v], &part.body.positions[3 * v], 6);
+            }
     }
     logf("DENT vertices=%u strength_milli=%u", moved_total, static_cast<unsigned>(hit.strength * 1000.f));
 }
@@ -170,7 +177,7 @@ void on_tick(GtModCtx *ctx) {
         }
     }
     if (g_pending.empty() || g_player_model == 0u) return;
-    if (g_parts.empty() && !make_copies(ctx)) {
+    if (g_parts.empty() && !capture(ctx)) {
         g_pending.clear();
         return;
     }
@@ -193,6 +200,6 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     axis_setting("up", 2, 1);
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
-    if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;
-    return api->on_vblank(self, on_tick);
+    if (api->on_vblank(self, on_tick) != 0) return 1;
+    return api->on_switch_off(self, restore_all_off);
 }

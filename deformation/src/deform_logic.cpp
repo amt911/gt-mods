@@ -11,7 +11,8 @@ float hit_strength(float dv, const Params &p) { return hit_detected(dv, p.thresh
 
 float falloff(float distance, float radius) {
     if (!(radius > 0.0f) || distance >= radius) return 0.0f;
-    return 1.0f - std::max(distance, 0.0f) / radius;
+    const float t = std::max(distance, 0.0f) / radius;  // smooth (C1) from 1 at the contact to 0 at the radius: no crease at either end
+    return (1.0f - t) * (1.0f - t) * (1.0f + 2.0f * t);
 }
 
 Body make_body(const std::vector<std::int16_t> &positions) {
@@ -38,7 +39,10 @@ std::size_t apply_dent(Body &b, Vec3 contact, Vec3 inward, float strength, const
         const float dx = at[0] - contact.x, dy = at[1] - contact.y, dz = at[2] - contact.z;
         const float weight = falloff(std::sqrt(dx * dx + dy * dy + dz * dz), radius);
         if (weight <= 0.0f) continue;
-        const float step = std::min(depth * weight, cap - b.dented[v]);
+        // the depth saturates smoothly towards the cap and the falloff shapes the dent: a hit far above the cap makes a deeper, rounded dent of the
+        // same smooth profile, never a flat plateau with a cliff at its rim
+        const float target = cap * weight * (1.0f - std::exp(-depth / cap));
+        const float step = std::min(target, cap - b.dented[v]);
         if (!(step > 0.0f)) continue;
         const float moves[3] = {inward.x * step, inward.y * step, inward.z * step};
         bool changed = false;
