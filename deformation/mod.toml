@@ -14,9 +14,11 @@ depth_per_ms = 0.05
 radius = 1.2
 # largest total dent of any vertex, in metres (no inside-out body)
 cap = 0.5
-# 0..1: how much of the push goes along -normal of each surface that faces the hit or runs along it (flanks cave in where they are) instead of along the hit
-# direction. 0 = off (default): above 0 a vertex of the roof can be dragged out as a spike (seen at 0.6)
-normal_push = 0.0
+# 0..1: how much of the push goes along -(the car box's outward direction at the vertex's position) instead of along the hit direction: flanks cave in sideways, the roof
+# sinks, a nose goes back, so the dent reads from any side. Position only (duplicated vertices of a hard edge move together: no tears). 0 = the hit direction only
+normal_push = 0.5
+# the dent reaches this many times less far up and down than along the car (distances along y count double)
+vertical_scale = 2.0
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
 min_vertices = 16
 # which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it): measured in the game's models, forward +z, right +x, up +y

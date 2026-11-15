@@ -44,27 +44,29 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
         std::int16_t *at = &b.positions[3 * v];
         float d2 = 0;
         for (int c = 0; c < 3; ++c) {
-            const float d = at[c] * unit * frame.half[c] - centre[c];
+            float d = at[c] * unit * frame.half[c] - centre[c];
+            if (c == 1) d *= p.vertical_scale;  // the dent reaches less far up and down than along the car
             d2 += d * d;
         }
         const float weight = falloff(std::sqrt(d2), p.radius);
         if (weight <= 0.0f) continue;
         const float step = std::min(amount * weight, p.cap - b.dented[v]);
         if (!(step > 0.0f)) continue;
-        // the push direction: the hit's, blended with -normal for a vertex whose surface faces the hit (normals live in metre space: inverse transpose of the box's scale)
+        // The push direction: the hit's, blended with -n where n is the outward direction of the car's box at this POSITION (p / half^2, normalised): a flank
+        // caves in sideways, the roof sinks, a nose goes back. It depends on the position only, never on the vertex's own normal, so duplicated vertices of a
+        // hard edge (same position, different normals) move together and the surface does not tear.
         float dir[3] = {in[0], in[1], in[2]};
-        if (!b.normals.empty() && p.normal_push > 0.0f) {
-            const std::int8_t *nrm0 = &b.normals[3 * v];
+        if (p.normal_push > 0.0f) {
             float n_m[3], len0 = 0;
             for (int c = 0; c < 3; ++c) {
-                n_m[c] = nrm0[c] / 127.0f / frame.half[c];
+                n_m[c] = at[c] * unit / frame.half[c];  // p / half^2 up to a constant: at is p / half * 32767
                 len0 += n_m[c] * n_m[c];
             }
             len0 = std::sqrt(len0);
-            if (len0 > 1e-6f) {
+            if (len0 > 1e-4f) {
                 for (float &x : n_m) x /= len0;
                 const float un0 = in[0] * n_m[0] + in[1] * n_m[1] + in[2] * n_m[2];
-                if (un0 < 0.3f) {  // the surface faces the push or runs along it (a flank); an inner or back surface keeps the hit's direction
+                if (un0 < 0.3f) {  // the surface faces the push or runs along it; the far side keeps the hit's direction
                     float m[3], mlen = 0;
                     for (int c = 0; c < 3; ++c) {
                         m[c] = (1.0f - p.normal_push) * in[c] - p.normal_push * n_m[c];
