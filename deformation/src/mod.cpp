@@ -324,6 +324,10 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     g_params.depth_per_ms = setting("depth_per_ms", g_params.depth_per_ms);
     g_params.radius = setting("radius", g_params.radius);
     g_params.cap = setting("cap", g_params.cap);
+    g_params.normal_push = setting("normal_push", g_params.normal_push);
+    g_params.vertical_scale = setting("vertical_scale", g_params.vertical_scale);
+    g_params.noise = setting("noise", g_params.noise);
+    g_params.jitter = setting("jitter", g_params.jitter);
     g_min_vertices = static_cast<uint32_t>(setting("min_vertices", 100.f));
     axis_setting("forward", 0, 2);
     axis_setting("right", 1, 0);

@@ -1,6 +1,6 @@
 id = "deformation"
 name = "Crash deformation"
-version = "0.1.0"
+version = "0.2.0"
 library = "libdeformation.so"
 api = 5
 enabled = false
@@ -9,17 +9,27 @@ enabled = false
 # velocity change of the player car in ONE physics step (m/s) above which a hit counts
 threshold = 4.0
 # dent depth in metres per m/s of velocity change above the threshold
-depth_per_ms = 0.05
+depth_per_ms = 0.08
 # radius of the dent around the contact point, in metres
-radius = 1.2
+radius = 2.0
 # largest total dent of any vertex, in metres (no inside-out body)
-cap = 0.5
+cap = 0.7
+# 0..1: how much of the push goes along -(the car box's outward direction at the vertex's position) instead of along the hit direction: flanks cave in sideways, the roof
+# sinks, a nose goes back, so the dent reads from any side. Position only (duplicated vertices of a hard edge move together: no tears). 0 = the hit direction only
+normal_push = 0.6
+# crumpled metal instead of a smooth bowl: the depth of each vertex varies by +-noise (0..1) and each vertex is moved up to +-jitter metres at random, both from the
+# vertex's position (duplicated vertices stay together)
+noise = 0.35
+jitter = 0.04
+# the dent reaches this many times less far up and down than along the car (distances along y count double)
+vertical_scale = 2.0
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
 min_vertices = 16
-# which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it); the game's models are Y-up
+# which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it): measured in the game's models, forward +z, right +x, up +y
+# (docs/FACTS.md 'Car draw matrix' in gran-turismo-decomp; 0.1.0 had right = -x, so its dents landed on the opposite side)
 forward_axis = "z"
 forward_sign = 1
 right_axis = "x"
-right_sign = -1
+right_sign = 1
 up_axis = "y"
 up_sign = 1

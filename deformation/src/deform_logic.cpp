@@ -5,6 +5,19 @@
 
 namespace deform {
 
+namespace {
+// Deterministic noise in [0, 1) from a position (the ORIGINAL s16 position: duplicated vertices of a hard edge, a part and its VRAM copy, get the same value).
+float hash01(std::int16_t x, std::int16_t y, std::int16_t z, std::uint32_t salt) {
+    std::uint32_t h = static_cast<std::uint16_t>(x) * 0x9E3779B1u ^ (static_cast<std::uint16_t>(y) + salt) * 0x85EBCA77u ^ static_cast<std::uint16_t>(z) * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    h *= 0x297A2D39u;
+    h ^= h >> 15;
+    return (h & 0xFFFFFFu) / 16777216.0f;
+}
+} // namespace
+
 bool hit_detected(float dv, float threshold) { return std::isfinite(dv) && dv > threshold; }
 
 float hit_strength(float dv, const Params &p) { return hit_detected(dv, p.threshold) ? (dv - p.threshold) * p.depth_per_ms : 0.0f; }
@@ -44,16 +57,47 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
         std::int16_t *at = &b.positions[3 * v];
         float d2 = 0;
         for (int c = 0; c < 3; ++c) {
-            const float d = at[c] * unit * frame.half[c] - centre[c];
+            float d = at[c] * unit * frame.half[c] - centre[c];
+            if (c == 1) d *= p.vertical_scale;  // the dent reaches less far up and down than along the car
             d2 += d * d;
         }
         const float weight = falloff(std::sqrt(d2), p.radius);
         if (weight <= 0.0f) continue;
-        const float step = std::min(amount * weight, p.cap - b.dented[v]);
+        // crumpled metal, not a smooth bowl: the depth varies per vertex by +-noise and the vertex is jittered a little (both from the position)
+        const std::int16_t *orig = &b.original[3 * v];
+        const float crumple = 1.0f + p.noise * (2.0f * hash01(orig[0], orig[1], orig[2], 1u) - 1.0f);
+        const float step = std::min(amount * weight * crumple, p.cap - b.dented[v]);
         if (!(step > 0.0f)) continue;
+        // The push direction: the hit's, blended with -n where n is the outward direction of the car's box at this POSITION (p / half^2, normalised): a flank
+        // caves in sideways, the roof sinks, a nose goes back. It depends on the position only, never on the vertex's own normal, so duplicated vertices of a
+        // hard edge (same position, different normals) move together and the surface does not tear.
+        float dir[3] = {in[0], in[1], in[2]};
+        if (p.normal_push > 0.0f) {
+            float n_m[3], len0 = 0;
+            for (int c = 0; c < 3; ++c) {
+                n_m[c] = at[c] * unit / frame.half[c];  // p / half^2 up to a constant: at is p / half * 32767
+                len0 += n_m[c] * n_m[c];
+            }
+            len0 = std::sqrt(len0);
+            if (len0 > 1e-4f) {
+                for (float &x : n_m) x /= len0;
+                const float un0 = in[0] * n_m[0] + in[1] * n_m[1] + in[2] * n_m[2];
+                if (un0 < 0.3f) {  // the surface faces the push or runs along it; the far side keeps the hit's direction
+                    float m[3], mlen = 0;
+                    for (int c = 0; c < 3; ++c) {
+                        m[c] = (1.0f - p.normal_push) * in[c] - p.normal_push * n_m[c];
+                        mlen += m[c] * m[c];
+                    }
+                    mlen = std::sqrt(mlen);
+                    if (mlen > 1e-6f)
+                        for (int c = 0; c < 3; ++c) dir[c] = m[c] / mlen;
+                }
+            }
+        }
         bool changed = false;
         for (int c = 0; c < 3; ++c) {
-            const float delta_s16 = in[c] * step / frame.half[c] * 32767.0f;  // metres back to s16 on this axis
+            const float jitter_m = p.jitter * weight * (2.0f * hash01(orig[0], orig[1], orig[2], 2u + static_cast<std::uint32_t>(c)) - 1.0f);
+            const float delta_s16 = (dir[c] * step + jitter_m) / frame.half[c] * 32767.0f;  // metres back to s16 on this axis
             const int target = std::clamp(static_cast<int>(std::lround(at[c] + delta_s16)), -32768, 32767);
             changed |= target != at[c];
             at[c] = static_cast<std::int16_t>(target);
@@ -73,7 +117,7 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
                 for (int c = 0; c < 3; ++c) {
                     const float d = at[c] * unit * frame.half[c] - centre[c];
                     g[c] = amount * dw_dr * d / r;
-                    un += in[c] * n[c];
+                    un += dir[c] * n[c];
                     gn += g[c] * n[c];
                 }
                 if (un < 0.0f) {  // the surface faces the push

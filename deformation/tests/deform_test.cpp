@@ -43,7 +43,7 @@ int main() {
     Body b = make_body(grid());
     assert(b.dented.size() == 27);
     const Vec3 contact{1.0f, 0.0f, 0.0f}, inward{-1, 0, 0};  // the right side, pushed in along -x
-    p.radius = 1.2f;
+    p.radius = 2.0f;
     const size_t moved = apply_dent(b, frame, contact, inward, 0.1f, p);
     assert(moved > 0 && moved < 27);
     auto vertex = [&](int x, int y, int z) { return 9 * (x + 1) + 3 * (y + 1) + (z + 1); };
@@ -115,6 +115,57 @@ int main() {
         Body none = make_body(pos);
         apply_dent(none, unit_box, {0, 0, 0}, {0, 0, -1}, 0.3f, q);
         assert(none.normals.empty());                                                                                     // a part without normals gets none
+    }
+    // normal_push: a vertex on the right flank (position +x) hit along -z with normal_push 0.5 caves in along -x as well; with 0 it only slides along -z; the same
+    // position with a different vertex normal moves identically (no tear at a hard edge)
+    {
+        Frame unit_box;
+        std::vector<std::int16_t> pos = {32767, 0, 0, 32767, 0, 0, -32767, 0, 0};
+        std::vector<std::int8_t> nrm = {127, 0, 0, 0, 127, 0, -127, 0, 0};  // two vertices at the same position with different normals, one on the far flank
+        Params q;
+        q.radius = 3.0f;
+        q.cap = 0.5f;
+        Body slide = make_body(pos, nrm), cave = make_body(pos, nrm);
+        apply_dent(slide, unit_box, {1, 0, 0}, {0, 0, -1}, 0.5f, q);
+        q.normal_push = 0.5f;
+        apply_dent(cave, unit_box, {1, 0, 0}, {0, 0, -1}, 0.5f, q);
+        assert(slide.positions[0] == 32767 && slide.positions[2] < 0);                                         // slides along -z only
+        assert(cave.positions[0] < 32767 && cave.positions[2] < 0 && cave.positions[2] > slide.positions[2]);  // caves in along -x and slides a bit less
+        assert(cave.positions[0] == cave.positions[3] && cave.positions[1] == cave.positions[4] && cave.positions[2] == cave.positions[5]);  // same position: same move
+    }
+    // vertical reach: a vertex 0.6 m above the contact is dented less than one 0.6 m along z (vertical_scale 2)
+    {
+        Frame unit_box;
+        Params q;
+        q.radius = 1.4f;
+        q.cap = 0.5f;
+        Body up = make_body({0, 19660, 0}), along = make_body({0, 0, 19660});  // 0.6 m on y / on z of a box with half extent 1
+        apply_dent(up, unit_box, {0, 0, 0}, {-1, 0, 0}, 0.5f, q);
+        apply_dent(along, unit_box, {0, 0, 0}, {-1, 0, 0}, 0.5f, q);
+        assert(up.dented[0] < along.dented[0]);
+    }
+    // crumple: with noise and jitter the same position moves identically in two bodies (duplicates stay together), neighbours differ, the cap still holds, and a
+    // zero-noise run is the smooth one
+    {
+        Params q;
+        q.radius = 2.0f;
+        q.cap = 0.3f;
+        q.noise = 0.5f;
+        q.jitter = 0.05f;
+        std::vector<std::int16_t> pts;
+        for (int i = 0; i < 40; ++i) { pts.push_back(static_cast<std::int16_t>(2000 * i)); pts.push_back(1000); pts.push_back(-3000); }
+        Body a1 = make_body(pts), a2 = make_body(pts);
+        apply_dent(a1, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        apply_dent(a2, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        assert(a1.positions == a2.positions);                                   // deterministic
+        for (size_t v = 0; v < a1.dented.size(); ++v) assert(a1.dented[v] <= q.cap + 1e-4f);
+        q.noise = 0.0f;
+        q.jitter = 0.0f;
+        Body smooth = make_body(pts);
+        apply_dent(smooth, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        int differing = 0;
+        for (size_t v = 0; v < a1.dented.size(); ++v) differing += a1.positions[3 * v + 2] != smooth.positions[3 * v + 2];
+        assert(differing > 5);                                                   // the crumple changes the surface
     }
     std::puts("deformation tests passed");
     return 0;
