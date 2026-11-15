@@ -51,9 +51,34 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
         if (weight <= 0.0f) continue;
         const float step = std::min(amount * weight, p.cap - b.dented[v]);
         if (!(step > 0.0f)) continue;
+        // the push direction: the hit's, blended with -normal for a vertex whose surface faces the hit (normals live in metre space: inverse transpose of the box's scale)
+        float dir[3] = {in[0], in[1], in[2]};
+        if (!b.normals.empty() && p.normal_push > 0.0f) {
+            const std::int8_t *nrm0 = &b.normals[3 * v];
+            float n_m[3], len0 = 0;
+            for (int c = 0; c < 3; ++c) {
+                n_m[c] = nrm0[c] / 127.0f / frame.half[c];
+                len0 += n_m[c] * n_m[c];
+            }
+            len0 = std::sqrt(len0);
+            if (len0 > 1e-6f) {
+                for (float &x : n_m) x /= len0;
+                const float un0 = in[0] * n_m[0] + in[1] * n_m[1] + in[2] * n_m[2];
+                if (un0 < 0.3f) {  // the surface faces the push or runs along it (a flank); an inner or back surface keeps the hit's direction
+                    float m[3], mlen = 0;
+                    for (int c = 0; c < 3; ++c) {
+                        m[c] = (1.0f - p.normal_push) * in[c] - p.normal_push * n_m[c];
+                        mlen += m[c] * m[c];
+                    }
+                    mlen = std::sqrt(mlen);
+                    if (mlen > 1e-6f)
+                        for (int c = 0; c < 3; ++c) dir[c] = m[c] / mlen;
+                }
+            }
+        }
         bool changed = false;
         for (int c = 0; c < 3; ++c) {
-            const float delta_s16 = in[c] * step / frame.half[c] * 32767.0f;  // metres back to s16 on this axis
+            const float delta_s16 = dir[c] * step / frame.half[c] * 32767.0f;  // metres back to s16 on this axis
             const int target = std::clamp(static_cast<int>(std::lround(at[c] + delta_s16)), -32768, 32767);
             changed |= target != at[c];
             at[c] = static_cast<std::int16_t>(target);
@@ -73,7 +98,7 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
                 for (int c = 0; c < 3; ++c) {
                     const float d = at[c] * unit * frame.half[c] - centre[c];
                     g[c] = amount * dw_dr * d / r;
-                    un += in[c] * n[c];
+                    un += dir[c] * n[c];
                     gn += g[c] * n[c];
                 }
                 if (un < 0.0f) {  // the surface faces the push

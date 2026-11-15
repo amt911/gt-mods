@@ -116,6 +116,21 @@ int main() {
         apply_dent(none, unit_box, {0, 0, 0}, {0, 0, -1}, 0.3f, q);
         assert(none.normals.empty());                                                                                     // a part without normals gets none
     }
+    // normal_push: a flank (outward normal +x) hit along -z with normal_push 0.5 caves in along -x as well; with 0 it only slides along -z; a surface facing away is left alone
+    {
+        Frame unit_box;
+        std::vector<std::int16_t> pos = {32767, 0, 0, -32767, 0, 0};
+        std::vector<std::int8_t> nrm = {127, 0, 0, -127, 0, 0};  // vertex 0 faces +x, vertex 1 faces -x
+        Params q;
+        q.radius = 3.0f;
+        q.cap = 0.5f;
+        Body slide = make_body(pos, nrm), cave = make_body(pos, nrm);
+        apply_dent(slide, unit_box, {1, 0, 0}, {0, 0, -1}, 0.5f, q);
+        q.normal_push = 0.5f;
+        apply_dent(cave, unit_box, {1, 0, 0}, {0, 0, -1}, 0.5f, q);
+        assert(slide.positions[0] == 32767 && slide.positions[2] < 0);                                // slides along -z only
+        assert(cave.positions[0] < 32767 && cave.positions[2] < 0 && cave.positions[2] > slide.positions[2]);  // caves in along -x and slides a bit less
+    }
     std::puts("deformation tests passed");
     return 0;
 }

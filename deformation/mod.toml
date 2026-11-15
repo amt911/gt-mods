@@ -1,6 +1,6 @@
 id = "deformation"
 name = "Crash deformation"
-version = "0.1.0"
+version = "0.2.0"
 library = "libdeformation.so"
 api = 5
 enabled = false
@@ -14,12 +14,16 @@ depth_per_ms = 0.05
 radius = 1.2
 # largest total dent of any vertex, in metres (no inside-out body)
 cap = 0.5
+# 0..1: how much of the push goes along -normal of each surface that faces the hit or runs along it (flanks cave in where they are) instead of along the hit
+# direction. 0 = off (default): above 0 a vertex of the roof can be dragged out as a spike (seen at 0.6)
+normal_push = 0.0
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
 min_vertices = 16
-# which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it); the game's models are Y-up
+# which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it): measured in the game's models, forward +z, right +x, up +y
+# (docs/FACTS.md 'Car draw matrix' in gran-turismo-decomp; 0.1.0 had right = -x, so its dents landed on the opposite side)
 forward_axis = "z"
 forward_sign = 1
 right_axis = "x"
-right_sign = -1
+right_sign = 1
 up_axis = "y"
 up_sign = 1

@@ -21,6 +21,7 @@ struct Params {
     float depth_per_ms = 0.03f;  // metres of dent per m/s above the threshold
     float radius = 0.9f;         // metres
     float cap = 0.35f;           // metres, total per vertex
+    float normal_push = 0.0f;    // 0..1: how much of the push goes along -normal of the vertex's surface (crumples the flank) instead of along the hit direction
 };
 
 // The car's box: half extents in metres along the model's x, y, z (full s16 range = one half extent).
@@ -52,7 +53,8 @@ Body make_body(const std::vector<std::int16_t> &positions, const std::vector<std
 // -direction. A zero direction gives the centre.
 Vec3 box_contact(const Frame &frame, Vec3 direction);
 
-// Pushes the vertices within `radius` of `contact` (metres, model axes) along `inward` (unit vector, into the body) by
+// With `normal_push` b > 0 a vertex whose normal faces the hit or runs along it (n.inward < 0.3) is pushed along normalize((1 - b) * inward + b * -normal): a flank or a fender caves in
+// where it is, so the dent reads from any side, not only along the hit direction. Pushes the vertices within `radius` of `contact` (metres, model axes) along `inward` (unit vector, into the body) by
 // cap * falloff * (1 - exp(-depth / cap)) metres: about depth * falloff for a light hit, saturating smoothly towards `cap` (never beyond it, in total
 // per vertex). The displacement is computed in metres from the vertex position, then converted back to s16 per axis. The normals of the dented
 // vertices (when the body has them) are tilted like the surface: n' = normalize(n + (-u.n) * grad_t h), h = the displacement field, grad_t its part
