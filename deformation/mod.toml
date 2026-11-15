@@ -8,12 +8,12 @@ enabled = false
 [settings]
 # velocity change of the player car in ONE physics step (m/s) above which a hit counts
 threshold = 4.0
-# dent depth, in fractions of the body's size, per m/s of velocity change above the threshold
+# dent depth in metres per m/s of velocity change above the threshold
 depth_per_ms = 0.05
-# radius of the dent around the contact point, in fractions of the body's size
-radius = 0.8
-# largest total dent of any vertex, in fractions of the body's size (no inside-out body)
-cap = 0.25
+# radius of the dent around the contact point, in metres
+radius = 1.2
+# largest total dent of any vertex, in metres (no inside-out body)
+cap = 0.5
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
 min_vertices = 16
 # which model axis (x, y, z) is the car's forward / right / up, and its sign (-1 flips it); the game's models are Y-up
@@ -23,5 +23,3 @@ right_axis = "x"
 right_sign = -1
 up_axis = "y"
 up_sign = 1
-# also dent the copies of the parts the game keeps in video memory (watches the model draw leaf after the first hit); 0 = off
-vram_mirrors = 1

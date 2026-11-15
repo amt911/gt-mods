@@ -10,6 +10,7 @@
 #include "deform_logic.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,6 +53,10 @@ struct Mirror {  // a run of a VRAM copy of a part: the game draws some parts fr
 std::vector<Mirror> g_mirrors;
 std::atomic<bool> g_armed{false};
 std::mutex g_candidates_mutex;
+std::set<uint32_t> g_part_blobs;  // the blobs of the player's parts (guarded by the same mutex)
+deform::Frame g_frame;
+std::atomic<bool> g_have_frame{false};
+uint64_t g_hit_vblank = 0;
 std::set<uint32_t> g_candidates;  // VRAM blobs the mesh-draw hook saw drawn
 std::set<uint32_t> g_examined;
 std::vector<Part> g_parts;                 // the player's vertex runs, dented in place
@@ -114,9 +119,20 @@ void on_mesh_draw(GtModCtx *ctx) {
         return;
     }
     const uint32_t blob = g_api->draw_mesh_blob(ctx);
-    if (blob >= 0x04000000u && blob < 0x04200000u) {
+    bool part_draw = false;
+    {
         std::lock_guard<std::mutex> lock(g_candidates_mutex);
-        if (g_candidates.size() < 4096u) g_candidates.insert(blob);
+        if (blob >= 0x04000000u && blob < 0x04200000u && g_candidates.size() < 4096u) g_candidates.insert(blob);
+        part_draw = g_part_blobs.count(blob) != 0u;
+    }
+    // The car's box: every part of the car is drawn with the same matrix (FACTS "Car draw matrix"); its rows are the half extents along the model axes
+    // (times the camera's rotation, which keeps their length).
+    if (part_draw && !g_have_frame.load(std::memory_order_acquire)) {
+        float m[12];
+        if (g_api->draw_matrix(g_self, ctx, m) == 0) {
+            for (int i = 0; i < 3; ++i) g_frame.half[i] = std::sqrt(m[3 * i] * m[3 * i] + m[3 * i + 1] * m[3 * i + 1] + m[3 * i + 2] * m[3 * i + 2]);
+            if (g_frame.half[0] > 0.05f && g_frame.half[1] > 0.05f && g_frame.half[2] > 0.05f) g_have_frame.store(true, std::memory_order_release);
+        }
     }
     g_api->call_original(ctx);
 }
@@ -130,6 +146,7 @@ void restore_all(GtModCtx *ctx) {
             if (g_api->run_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), now) != 0) break;
             if (std::memcmp(now, &part.written[3 * v], 6) != 0 || std::memcmp(now, &part.body.original[3 * v], 6) == 0) continue;
             g_api->run_set_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.original[3 * v]);
+            if (!part.body.original_normals.empty()) g_api->run_set_normal(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.original_normals[3 * v]);
             ++restored;
         }
     }
@@ -140,6 +157,7 @@ void restore_all(GtModCtx *ctx) {
             if (g_api->run_vertex(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), now) != 0) break;
             if (std::memcmp(now, &part.written[3 * v], 6) != 0 || std::memcmp(now, &part.body.original[3 * v], 6) == 0) continue;
             g_api->run_set_vertex(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), &part.body.original[3 * v]);
+            if (!part.body.original_normals.empty()) g_api->run_set_normal(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), &part.body.original_normals[3 * v]);
         }
     }
     g_mirrors.clear();
@@ -158,7 +176,9 @@ void release_all(GtModCtx *ctx) {
     {
         std::lock_guard<std::mutex> lock(g_candidates_mutex);
         g_candidates.clear();
+        g_part_blobs.clear();
     }
+    g_have_frame.store(false, std::memory_order_release);
     g_examined.clear();
     g_armed.store(false, std::memory_order_release);
     g_model_cars.clear();
@@ -181,8 +201,15 @@ bool capture(GtModCtx *ctx) {
         Part part;
         part.blob = runs[i].blob;
         part.run = runs[i].run;
-        part.body = deform::make_body(positions);
+        std::vector<int8_t> normals(3u * runs[i].count);
+        bool has_normals = true;
+        for (uint32_t v = 0; v < runs[i].count && has_normals; ++v) has_normals = g_api->run_normal(g_self, ctx, runs[i].blob, runs[i].run, v, &normals[3u * v]) == 0;
+        part.body = deform::make_body(positions, has_normals ? normals : std::vector<int8_t>());
         part.written = positions;
+        {
+            std::lock_guard<std::mutex> lock(g_candidates_mutex);
+            g_part_blobs.insert(runs[i].blob);
+        }
         g_parts.push_back(std::move(part));
     }
     logf("CAPTURE runs=%u of=%u", static_cast<unsigned>(g_parts.size()), n);
@@ -214,8 +241,10 @@ void find_mirrors(GtModCtx *ctx) {
                 if (!same) continue;
                 g_mirrors.push_back({blob, runs[r].run, p});
                 for (uint32_t v = 0; v < runs[r].count; ++v)  // a part dented before its copy was seen
-                    if (std::memcmp(&part.written[3 * v], &part.body.original[3 * v], 6) != 0)
+                    if (std::memcmp(&part.written[3 * v], &part.body.original[3 * v], 6) != 0) {
                         g_api->run_set_vertex(g_self, ctx, blob, runs[r].run, v, &part.written[3 * v]);
+                        if (!part.body.normals.empty()) g_api->run_set_normal(g_self, ctx, blob, runs[r].run, v, &part.body.normals[3 * v]);
+                    }
                 break;
             }
     }
@@ -223,28 +252,38 @@ void find_mirrors(GtModCtx *ctx) {
 }
 
 void apply_hit(GtModCtx *ctx, const Hit &hit) {
-    deform::Vec3 contact, inward;
     float c[3] = {0, 0, 0};
-    for (int i = 0; i < 3; ++i) c[g_axis[i]] = g_sign[i] * hit.contact[i];  // body frame -> model axes
-    // each part is normalised to the full s16 range in its own frame: the contact is on that frame's edge in the hit direction
-    contact = {c[0] * 32767.f, c[1] * 32767.f, c[2] * 32767.f};
-    inward = {-c[0], -c[1], -c[2]};
+    for (int i = 0; i < 3; ++i) c[g_axis[i]] = g_sign[i] * hit.contact[i];  // body frame (forward, right, up) -> model axes
+    const float len = std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+    if (!(len > 1e-6f)) return;
+    for (float &v : c) v /= len;
+    // the hit pushed the car along -c: the contact is where the ray along c leaves the car's box, the dent goes into the body along -c
+    const deform::Vec3 contact = deform::box_contact(g_frame, {c[0], c[1], c[2]});
+    const deform::Vec3 inward{-c[0], -c[1], -c[2]};
     unsigned moved_total = 0;
     for (size_t p = 0; p < g_parts.size(); ++p) {
         Part &part = g_parts[p];
         const std::vector<int16_t> before = part.body.positions;
-        const size_t moved = deform::apply_dent(part.body, contact, inward, hit.strength, g_params);
+        const std::vector<int8_t> before_normals = part.body.normals;
+        const size_t moved = deform::apply_dent(part.body, g_frame, contact, inward, hit.strength, g_params);
         if (moved == 0) continue;
         moved_total += static_cast<unsigned>(moved);
         for (size_t v = 0; v < part.body.dented.size(); ++v)
-            if (std::memcmp(&before[3 * v], &part.body.positions[3 * v], 6) != 0) {
+            if (std::memcmp(&before[3 * v], &part.body.positions[3 * v], 6) != 0 ||
+                (!part.body.normals.empty() && std::memcmp(&before_normals[3 * v], &part.body.normals[3 * v], 3) != 0)) {
                 g_api->run_set_vertex(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.positions[3 * v]);
+                if (!part.body.normals.empty()) g_api->run_set_normal(g_self, ctx, part.blob, part.run, static_cast<uint32_t>(v), &part.body.normals[3 * v]);
                 for (const Mirror &m : g_mirrors)
-                    if (m.part == p) g_api->run_set_vertex(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), &part.body.positions[3 * v]);
+                    if (m.part == p) {
+                        g_api->run_set_vertex(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), &part.body.positions[3 * v]);
+                        if (!part.body.normals.empty()) g_api->run_set_normal(g_self, ctx, m.blob, m.run, static_cast<uint32_t>(v), &part.body.normals[3 * v]);
+                    }
                 std::memcpy(&part.written[3 * v], &part.body.positions[3 * v], 6);
             }
     }
-    logf("DENT vertices=%u strength_milli=%u", moved_total, static_cast<unsigned>(hit.strength * 1000.f));
+    char line[160];
+    std::snprintf(line, sizeof line, "DENT vertices=%u depth_mm=%u box=(%.2f %.2f %.2f) contact=(%.2f %.2f %.2f)", moved_total, static_cast<unsigned>(hit.strength * 1000.f), g_frame.half[0], g_frame.half[1], g_frame.half[2], contact.x, contact.y, contact.z);
+    g_api->log(g_self, line);
 }
 
 void on_tick(GtModCtx *ctx) {
@@ -262,6 +301,16 @@ void on_tick(GtModCtx *ctx) {
         g_pending.clear();
         return;
     }
+    if (!g_have_frame.load(std::memory_order_acquire)) {  // the first draw of a part after the capture gives the car's box
+        if (g_hit_vblank == 0) g_hit_vblank = now;
+        if (now > g_hit_vblank + 240u) {
+            logf("NOFRAME hits dropped=%u", static_cast<unsigned>(g_pending.size()));
+            g_pending.clear();
+            g_hit_vblank = 0;
+        }
+        return;
+    }
+    g_hit_vblank = 0;
     for (const Hit &hit : g_pending) apply_hit(ctx, hit);
     g_pending.clear();
 }
@@ -281,7 +330,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     axis_setting("up", 2, 1);
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
-    if (setting("vram_mirrors", 1.f) != 0.f && api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;
+    if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;
     if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->on_switch_off(self, restore_all_off);
 }
