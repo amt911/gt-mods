@@ -144,6 +144,29 @@ int main() {
         apply_dent(along, unit_box, {0, 0, 0}, {-1, 0, 0}, 0.5f, q);
         assert(up.dented[0] < along.dented[0]);
     }
+    // crumple: with noise and jitter the same position moves identically in two bodies (duplicates stay together), neighbours differ, the cap still holds, and a
+    // zero-noise run is the smooth one
+    {
+        Params q;
+        q.radius = 2.0f;
+        q.cap = 0.3f;
+        q.noise = 0.5f;
+        q.jitter = 0.05f;
+        std::vector<std::int16_t> pts;
+        for (int i = 0; i < 40; ++i) { pts.push_back(static_cast<std::int16_t>(2000 * i)); pts.push_back(1000); pts.push_back(-3000); }
+        Body a1 = make_body(pts), a2 = make_body(pts);
+        apply_dent(a1, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        apply_dent(a2, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        assert(a1.positions == a2.positions);                                   // deterministic
+        for (size_t v = 0; v < a1.dented.size(); ++v) assert(a1.dented[v] <= q.cap + 1e-4f);
+        q.noise = 0.0f;
+        q.jitter = 0.0f;
+        Body smooth = make_body(pts);
+        apply_dent(smooth, frame, {0.3f, 0, 0}, {0, 0, 1}, 1.0f, q);
+        int differing = 0;
+        for (size_t v = 0; v < a1.dented.size(); ++v) differing += a1.positions[3 * v + 2] != smooth.positions[3 * v + 2];
+        assert(differing > 5);                                                   // the crumple changes the surface
+    }
     std::puts("deformation tests passed");
     return 0;
 }

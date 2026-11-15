@@ -21,6 +21,8 @@ struct Params {
     float depth_per_ms = 0.03f;  // metres of dent per m/s above the threshold
     float radius = 0.9f;         // metres
     float cap = 0.35f;           // metres, total per vertex
+    float noise = 0.0f;           // 0..1: the depth of each vertex varies by +-noise (hash of its position), so highlights break up like crumpled metal
+    float jitter = 0.0f;          // metres: each dented vertex is also moved by up to +-jitter (times the falloff) in a random direction (hash of its position)
     float vertical_scale = 2.0f;  // distances along y count this many times: the dent reaches half as far up and down (the roof edge is not the flank's neighbour)
     float normal_push = 0.0f;    // 0..1: how much of the push goes along -normal of the vertex's surface (crumples the flank) instead of along the hit direction
 };
