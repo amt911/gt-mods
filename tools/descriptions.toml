@@ -3,6 +3,7 @@
 [descriptions]
 analog-pedals = "Analog triggers and keyboard keys mapped to throttle and brake (0..1)."
 cheats = "Race-time cheats in the F9 menu: slow motion and frozen AI cars."
+deformation = "Dents the player's car where it hits: the deeper the hit, the deeper the dent. Lasts for the race."
 draw-distance = "Pushes the race world's far clip plane further away so far scenery shows instead of popping in."
 orbit-camera = "Gran Turismo 7 style orbit camera on the right stick."
 reset-to-track = "One button puts the player's car back on the road, upright and facing the way it was going."
