@@ -10,14 +10,14 @@ on:
       sdk_ref:
         description: "gran-turismo-decomp commit SHA whose include/ the mods build against"
         required: false
-        default: 509effb0b6b78c749247f2fe21ab94f8c80ab7ae
+        default: ef9bd4304ef45cdd04373047c39d144d67cf31af
 
 permissions:
   contents: read
 
 env:
   # Pinned: the mods build against this commit of the public decomp repo's include/gt_mod/ headers.
-  SDK_REF: ${{ inputs.sdk_ref || '509effb0b6b78c749247f2fe21ab94f8c80ab7ae' }}
+  SDK_REF: ${{ inputs.sdk_ref || 'ef9bd4304ef45cdd04373047c39d144d67cf31af' }}
   PLATFORM: linux-x86_64
 
 jobs:
