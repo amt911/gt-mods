@@ -154,10 +154,10 @@ AiSpeed cycle(AiSpeed s, int direction) {
 }
 float ai_factor(SlowMo slow, AiSpeed speed, bool freeze_ai) { return freeze_ai ? 0.0f : factor(slow) * factor(speed); }
 
-Kin nitro(const Kin &now, float throttle, float dt) {
+Kin nitro(const Kin &now, float throttle, float dt, float accel) {
     if (throttle < kNitroThrottle) return now;
     Kin out = now;
-    const float dv = kNitroAccel * dt;
+    const float dv = accel * dt;
     for (int i = 0; i < 3; ++i) out.v[kIxVel + i] += now.v[kIxRows + i] * dv;  // along the forward row
     out.v[kIxSpeed] += dv;
     return out;
@@ -216,6 +216,13 @@ std::uint8_t Tape::at(long step) const {
     if (bytes_.empty()) return 0;
     if (step < 0) return bytes_.front();
     return static_cast<std::size_t>(step) < bytes_.size() ? bytes_[static_cast<std::size_t>(step)] : 0;
+}
+
+int nitro_level(float accel) {
+    int best = kNitroDefaultLevel;
+    for (int i = 0; i < kNitroLevelCount; ++i)
+        if (std::fabs(kNitroLevels[i] - accel) < std::fabs(kNitroLevels[best] - accel)) best = i;
+    return best;
 }
 
 }  // namespace cheats

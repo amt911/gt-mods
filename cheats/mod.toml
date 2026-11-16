@@ -1,8 +1,8 @@
 id = "cheats"
 name = "Cheats"
-version = "0.5.0"
+version = "0.6.0"
 library = "libcheats.so"
-api = 4
+api = 6
 enabled = false
 
 [settings]
@@ -11,3 +11,5 @@ enabled = false
 slow_motion = "off"
 # freeze_ai: true = AI cars skip their physics step (they stand still, keeping their speed for when you turn it off)
 freeze_ai = false
+# nitro_accel: m/s^2 the nitro adds at full throttle (the nearest of 3, 6, 10, 15, 25; the Race menu's "Nitro power" changes it live)
+nitro_accel = 6

@@ -171,6 +171,8 @@ void new_cheats() {
     const Kin boosted = nitro(k, 1.0f, 0.5f);
     assert(boosted.v[kIxVel + 0] == 13.0f && boosted.v[kIxSpeed] == 13.0f);   // 6 m/s^2 for 0.5 s
     assert(nitro(k, 0.5f, 0.5f).v[kIxVel + 0] == 10.0f);                      // throttle not floored: nothing
+    assert(nitro(k, 1.0f, 0.5f, 20.0f).v[kIxSpeed] - k.v[kIxSpeed] == 10.0f);    // 0.6.0: the power is a parameter (20 m/s^2 x 0.5 s)
+    assert(nitro_level(6.0f) == kNitroDefaultLevel && nitro_level(100.0f) == kNitroLevelCount - 1 && nitro_level(0.0f) == 0 && nitro_level(12.0f) == 2);
 
     Kin before{}, now{};
     now.v[kIxRows + 8] = 1.0f;                                               // up row = the third axis

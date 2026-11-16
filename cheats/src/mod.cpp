@@ -30,6 +30,7 @@
 
 #include "cheats_logic.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -52,6 +53,7 @@ std::atomic<int> g_slow{0};      // cheats::SlowMo as an int
 std::atomic<bool> g_freeze{false};
 std::atomic<int> g_ai_speed{0};  // cheats::AiSpeed as an int
 std::atomic<bool> g_nitro{false}, g_moon{false};
+std::atomic<int> g_nitro_level{cheats::kNitroDefaultLevel};  // Nitro power (0.6.0)
 std::atomic<int> g_jump{0};      // pending jumps (Enter on the row)
 unsigned g_jump_at = 0;          // GT_MOD_CHEATS_JUMP_AT=<step> (checks): one jump at that player-car step
 bool g_log = false;
@@ -199,7 +201,12 @@ void on_step(GtModCtx *c) {
             ctl.slow = static_cast<cheats::SlowMo>(g_slow.load());
             ctl.freeze = g_freeze.load();
             ctl.ai = static_cast<cheats::AiSpeed>(g_ai_speed.load());
-            ctl.nitro = g_nitro.load();
+            // The menu's ON, or its button held (0.6.0, API v6; sabotage 4, --sabotage-hotkey must FAIL: the button does nothing).
+            static bool held_before = false;
+            const bool held = g_settings.sabotage != 4 && g_api->action_held(g_self, "nitro") != 0;
+            if (held != held_before) g_api->log(g_self, held ? "NITRO held -> ON" : "NITRO held -> OFF");
+            held_before = held;
+            ctl.nitro = g_nitro.load() || held;
             ctl.moon = g_moon.load();
             ctl.jump = pending_jump;
         }
@@ -225,7 +232,7 @@ void on_step(GtModCtx *c) {
         }
         if (!ai && active) {  // the player's own cheats
             if (moon && !fresh) { out = cheats::moon(base.kin, out); changed = true; }
-            if (nitro && cars[i].state.throttle >= cheats::kNitroThrottle) { out = cheats::nitro(out, cars[i].state.throttle, kStepSeconds); changed = true; }
+            if (nitro && cars[i].state.throttle >= cheats::kNitroThrottle) { out = cheats::nitro(out, cars[i].state.throttle, kStepSeconds, cheats::kNitroLevels[g_nitro_level.load()]); changed = true; }
             if (jump) { out = cheats::jump(out); changed = true; }
         }
         if (changed) {
@@ -352,9 +359,18 @@ void nitro_activate(GtMod *, int) {
     g_nitro.store(next);
     g_api->log(g_self, next ? "ROW nitro -> ON" : "ROW nitro -> OFF");
 }
-void nitro_action(GtMod *self, GtModCtx *) {  // its hotkey (default Ctrl+N / L+TRIANGLE)
-    if (g_settings.sabotage == 4) return;  // sabotage (tools/mod_cheats_check.sh --sabotage-hotkey must FAIL): the hotkey does nothing
-    nitro_activate(self, 0);
+void nitro_power_label(GtMod *, char *out, std::uint32_t capacity) {
+    std::snprintf(out, capacity, "Nitro power  %.0f m/s2", static_cast<double>(cheats::kNitroLevels[g_nitro_level.load()]));
+}
+void nitro_power_activate(GtMod *, int direction) {
+    const int next = std::clamp(g_nitro_level.load() + (direction < 0 ? -1 : 1), 0, cheats::kNitroLevelCount - 1);
+    g_nitro_level.store(next);
+    char line[64];
+    std::snprintf(line, sizeof line, "ROW nitro_power -> %.0f", static_cast<double>(cheats::kNitroLevels[next]));
+    g_api->log(g_self, line);
+}
+void nitro_action(GtMod *self, GtModCtx *) {  // 0.6.0: the nitro lasts while its button is held (action_held in the step); a press alone does nothing
+    (void)self;
 }
 void moon_label(GtMod *, char *out, std::uint32_t capacity) {
     std::snprintf(out, capacity, "Moon gravity %s", in_replay() ? kReplayRecorded : g_moon.load() ? "ON" : "OFF");
@@ -370,7 +386,7 @@ void jump_action(GtMod *, GtModCtx *) {  // Enter on its menu entry, or its hotk
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version < GT_MOD_API_VERSION_4) return 1;  // named SDK (v3) + the cheat device's actions and entries (v4)
+    if (api == nullptr || api->version < GT_MOD_API_VERSION_6) return 1;  // named SDK (v3), the cheat device's actions and entries (v4), action_held (v6)
     g_api = api;
     g_self = self;
     g_settings = cheats::parse_settings([&](const char *k) { return api->config(self, k); }, [&](const std::string &w) { api->log(self, w.c_str()); });
@@ -388,14 +404,16 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (const char *e = std::getenv("GT_MOD_CHEATS_LOG_EVERY"); e != nullptr && std::atoi(e) > 0) g_log_every = static_cast<unsigned>(std::atoi(e));
     g_slow.store(static_cast<int>(g_settings.slow));
     g_freeze.store(g_settings.freeze_ai);
+    if (const char *v = api->config(self, "nitro_accel")) g_nitro_level.store(cheats::nitro_level(static_cast<float>(std::atof(v))));
     // The cheat device (host API v4): race cheats in Race, money in Money & garage, nitro and jump also as hotkeys.
     if (api->add_entry(self, "Race", "slow_motion", slow_label, slow_activate) != 0) return 1;
     if (api->add_entry(self, "Race", "freeze_ai", freeze_label, freeze_activate) != 0) return 1;
     if (api->add_entry(self, "Race", "ai_speed", ai_speed_label, ai_speed_activate) != 0) return 1;
     if (api->add_entry(self, "Race", "nitro", nitro_label, nitro_activate) != 0) return 1;
+    if (api->add_entry(self, "Race", "nitro_power", nitro_power_label, nitro_power_activate) != 0) return 1;
     if (api->add_entry(self, "Race", "moon", moon_label, moon_activate) != 0) return 1;
-    if (api->add_action(self, "nitro", "Nitro on/off", "Race", nitro_action, "Ctrl+N", "L+TRIANGLE") != 0) return 1;
-    if (api->add_action(self, "jump", "Jump", "Race", jump_action, "Ctrl+J", "R+TRIANGLE") != 0) return 1;
+    if (api->add_action(self, "nitro", "Nitro (hold)", "Race", nitro_action, "Ctrl+N", "DOWN") != 0) return 1;
+    if (api->add_action(self, "jump", "Jump", "Race", jump_action, "Ctrl+J", "UP") != 0) return 1;
     if (api->add_entry(self, "Money & garage", "money", money_label, money_activate) != 0) return 1;
     if (api->on_vblank(self, on_tick) != 0) return 1;
     return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
