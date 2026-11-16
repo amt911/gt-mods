@@ -135,6 +135,22 @@ static void records_every_interval_only_good_poses() {
     drive(rs, 100, 100.0f, false, &out);
     assert(rs.recorded() >= 100 / kPoseEveryNSteps - 1 && rs.recorded() <= 100 / kPoseEveryNSteps + 1);
 }
+static void stuck_past_the_age_limit_still_resets() {  // 0.3.1 (user 2026-11-16: "a veces no va")
+    for (int sabotage : {0, 6}) {
+        Settings t = steps_settings();
+        t.sabotage = sabotage;
+        Resetter rs(t);
+        std::optional<Pose> out;
+        drive(rs, 200, 0.0f, false, &out);  // good driving along x: clear poses
+        CarSample stuck = good_sample();
+        stuck.wheels_on_asphalt = 2;  // in the gravel, wrestling with the car: nothing recorded
+        for (int i = 0; i < kMaxPoseAgeSteps + 100; ++i) rs.step(stuck, pose_at(199.0f), false);
+        std::optional<Pose> got;
+        for (int i = 0; i < 2; ++i) if (auto r = rs.step(stuck, pose_at(199.0f), i == 1)) got = r;
+        if (sabotage == 0) assert(got && got->v[0] < 199.0f);  // back to a clear pose although older than the limit
+        else assert(!got && rs.refused());                     // sabotage 6 (the 0.3.0 rule): refused
+    }
+}
 static void button_with_empty_ring_does_nothing() {
     Resetter rs(steps_settings());
     std::optional<Pose> out;
@@ -373,6 +389,7 @@ static void ahead_setting() {
 int main() {
     good_pose_needs_a_calm_forward_car();
     old_poses_are_never_restored();
+    stuck_past_the_age_limit_still_resets();
     a_position_jump_clears_the_ring();
     our_own_restore_is_not_a_jump();
     invalidate_forgets_the_ring_and_the_last_position();

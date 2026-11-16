@@ -1,6 +1,6 @@
 id = "reset-to-track"
 name = "Reset to track"
-version = "0.3.0"
+version = "0.3.1"
 library = "libreset_to_track.so"
 api = 4
 enabled = false
