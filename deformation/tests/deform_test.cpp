@@ -167,6 +167,79 @@ int main() {
         for (size_t v = 0; v < a1.dented.size(); ++v) differing += a1.positions[3 * v + 2] != smooth.positions[3 * v + 2];
         assert(differing > 5);                                                   // the crumple changes the surface
     }
+    // roof: a side hit at mid height (contact on the right flank, y = 0) used to leave the roof alone (the vertical reach 2x radius stops 1.4 m up at the
+    // roof edge and the roof centre is further still); with roof_coupling the roof vertices within the radius (measured on the ground plane) sink and lean in,
+    // the cap holds, and 0 is the old behaviour
+    {
+        Frame car;
+        car.half[0] = 0.89f; car.half[1] = 0.72f; car.half[2] = 1.91f;
+        Params q;
+        q.radius = 2.0f; q.cap = 0.7f; q.normal_push = 0.6f; q.vertical_scale = 2.0f;
+        const std::vector<std::int16_t> roof = {18409, 32767, 0,    // 0.5 m right of the centre line, on the roof
+                                                0, 32767, 0,        // the roof centre
+                                                0, 32767, 30000,    // the roof far forward (outside the radius of a hit at z = 0)
+                                                18409, 0, 0};      // a flank vertex at the same place, mid height: dented as before
+        Body off = make_body(roof), on = make_body(roof);
+        apply_dent(off, car, {0.89f, 0.0f, 0.0f}, {-1, 0, 0}, 1.0f, q);
+        q.roof_coupling = 0.6f;
+        apply_dent(on, car, {0.89f, 0.0f, 0.0f}, {-1, 0, 0}, 1.0f, q);
+        assert(off.dented[0] < 0.1f && off.dented[1] < 0.05f);                 // roof_is_untouched_without_coupling: the bug
+        assert(on.dented[0] > 0.25f && on.dented[1] > 0.15f);                     // roof_dents_on_a_side_hit
+        assert(on.positions[1] < on.original[1] && on.positions[4] < on.original[4]);  // it sinks
+        assert(on.dented[2] < 0.01f);                                            // almost at the radius: hardly moved
+        assert(on.positions[9] == off.positions[9] && on.positions[10] == off.positions[10]);  // the flank is not changed by the coupling
+        for (int i = 0; i < 20; ++i) apply_dent(on, car, {0.89f, 0.0f, 0.0f}, {-1, 0, 0}, 1.0f, q);
+        for (size_t v = 0; v < on.dented.size(); ++v) assert(on.dented[v] <= q.cap + 1e-4f);  // roof_is_capped
+    }
+    // StepFilter: a velocity change that is not a hit never counts
+    {
+        const float here[3] = {0, 0, 0};
+        StepFilter f;
+        // the first steps of a race never count, even with a huge change (the host compares the first step with the previous race's last sample)
+        assert(!f.accept(1000, here, 5.0f, 40.0f, 0.0f, false));
+        for (int i = 1; i < 30; ++i) assert(!f.accept(1000 + 2 * i, here, 5.0f, 40.0f, 0.0f, false));
+        assert(f.accept(1062, here, 5.0f, 12.0f, 0.0f, false));                    // after the warm-up a real hit counts
+        // a gap (a retry, a pause) starts again
+        assert(!f.accept(2000, here, 5.0f, 30.0f, 0.0f, false));
+        for (int i = 1; i < 30; ++i) f.accept(2000 + 2 * i, here, 5.0f, 0.0f, 0.0f, false);
+        assert(f.accept(2062, here, 5.0f, 8.0f, 0.0f, false));
+        // a teleport (the car put back on the track, 80 m away at 10 m/s) starts again, and its velocity reset does not count
+        const float far_away[3] = {80, 0, 0};
+        assert(!f.accept(2064, far_away, 0.0f, 10.0f, 0.0f, false));
+        for (int i = 1; i < 30; ++i) f.accept(2064 + 2 * i, far_away, 0.0f, 0.0f, 0.0f, false);
+        assert(f.accept(2126, far_away, 0.0f, 9.0f, 0.0f, false));                  // and a hit afterwards counts again
+        // moving at speed is not a teleport: 14 m in 1 s at 14 m/s
+        float p[3] = {0, 0, 0};
+        StepFilter g;
+        g.accept(0, p, 14.0f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 60; ++i) { p[0] += 14.0f / 30.0f; assert(!g.accept(2 * i, p, 14.0f, 0.0f, 0.0f, false) || i >= 30); }
+        p[0] += 0.5f;
+        assert(g.accept(122, p, 3.0f, 11.0f, 0.2f, true));                          // hit_at_speed_counts: a wall at 14 m/s
+        // the rolling start: speed set to 50 km/h within the first steps of the race, from slower or from faster, is not a hit; the same change to another speed is
+        StepFilter r;
+        float q[3] = {0, 0, 0};
+        r.accept(100, q, 13.9f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 272; ++i) { q[0] += 0.1f; r.accept(100 + 2 * i, q, 7.9f, 0.0f, 0.0f, false); }
+        assert(!r.accept(100 + 2 * 273, q, 13.8889f, 5.95f, 0.0f, false));          // rolling_start_is_not_a_hit (slower before: the push is forward)
+        StepFilter r2;
+        r2.accept(100, q, 25.0f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 100; ++i) r2.accept(100 + 2 * i, q, 25.0f, 0.0f, 0.0f, false);
+        assert(!r2.accept(100 + 2 * 101, q, 13.8889f, 11.1f, 0.0f, false));         // faster before: the push is backward, which dented the FRONT
+        StepFilter r3;
+        r3.accept(100, q, 25.0f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 100; ++i) r3.accept(100 + 2 * i, q, 25.0f, 0.0f, 0.0f, false);
+        assert(r3.accept(100 + 2 * 101, q, 16.0f, 9.0f, 0.0f, false));              // another speed after the change: a hit
+        // a wall hit that happens to leave the car at the start speed is still a hit when the car is off the track or turned
+        StepFilter r4;
+        r4.accept(100, q, 25.0f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 100; ++i) r4.accept(100 + 2 * i, q, 25.0f, 0.0f, 0.0f, false);
+        assert(r4.accept(100 + 2 * 101, q, 13.8889f, 11.1f, 0.0f, true));
+        // the start window ends: later, the same speed after a change counts
+        StepFilter r5;
+        r5.accept(100, q, 25.0f, 0.0f, 0.0f, false);
+        for (int i = 1; i <= 2000; ++i) r5.accept(100 + 2 * i, q, 25.0f, 0.0f, 0.0f, false);
+        assert(r5.accept(100 + 2 * 2001, q, 13.8889f, 11.1f, 0.0f, false));
+    }
     std::puts("deformation tests passed");
     return 0;
 }

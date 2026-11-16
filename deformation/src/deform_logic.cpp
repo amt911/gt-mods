@@ -28,6 +28,38 @@ float falloff(float distance, float radius) {
     return (1.0f - t) * (1.0f - t) * (1.0f + 2.0f * t);
 }
 
+void StepFilter::reset() { have_ = false; }
+
+bool StepFilter::accept(std::uint64_t vblank, const float position[3], float speed, float dv_magnitude, float yaw_rate_jump, bool off_track) {
+    bool restart = !have_ || vblank < last_vblank_ || vblank - last_vblank_ > params_.gap_vblanks;
+    if (!restart) {
+        const float dx = position[0] - last_position_[0], dy = position[1] - last_position_[1], dz = position[2] - last_position_[2];
+        const float dt = static_cast<float>(std::max<std::uint64_t>(1, vblank - last_vblank_)) / 60.0f;
+        const float allowed = 1.5f * (std::max(std::fabs(last_speed_), std::fabs(speed)) + (std::isfinite(dv_magnitude) ? dv_magnitude : 0.0f)) * dt + params_.teleport_margin;
+        restart = !(std::sqrt(dx * dx + dy * dy + dz * dz) <= allowed);  // also true for NaN
+    }
+    const float before_speed = last_speed_;
+    if (restart) {
+        warm_ = params_.warmup_steps;
+        since_start_ = 0;
+    } else {
+        ++since_start_;
+    }
+    have_ = true;
+    last_vblank_ = vblank;
+    for (int i = 0; i < 3; ++i) last_position_[i] = position[i];
+    last_speed_ = speed;
+    if (warm_ > 0) {
+        --warm_;
+        return false;
+    }
+    // the rolling start: the speed is set to the start speed when the countdown ends (no yaw, no contact); not a hit
+    if (since_start_ < params_.start_window_steps && std::fabs(speed - params_.start_speed) < params_.start_tolerance && std::fabs(before_speed - speed) > 1.0f &&
+        yaw_rate_jump < 0.3f && !off_track)
+        return false;
+    return true;
+}
+
 Body make_body(const std::vector<std::int16_t> &positions, const std::vector<std::int8_t> &normals) {
     Body b;
     b.positions = positions;
@@ -61,7 +93,11 @@ std::size_t apply_dent(Body &b, const Frame &frame, Vec3 contact, Vec3 inward, f
             if (c == 1) d *= p.vertical_scale;  // the dent reaches less far up and down than along the car
             d2 += d * d;
         }
-        const float weight = falloff(std::sqrt(d2), p.radius);
+        float weight = falloff(std::sqrt(d2), p.radius);
+        if (p.roof_coupling > 0.0f && at[1] * unit > p.roof_start) {  // the roof and what is above the beltline: the ground-plane distance alone counts
+            const float dx = at[0] * unit * frame.half[0] - centre[0], dz = at[2] * unit * frame.half[2] - centre[2];
+            weight = std::max(weight, p.roof_coupling * falloff(std::sqrt(dx * dx + dz * dz), p.radius));
+        }
         if (weight <= 0.0f) continue;
         // crumpled metal, not a smooth bowl: the depth varies per vertex by +-noise and the vertex is jittered a little (both from the position)
         const std::int16_t *orig = &b.original[3 * v];

@@ -24,6 +24,8 @@ struct Params {
     float noise = 0.0f;           // 0..1: the depth of each vertex varies by +-noise (hash of its position), so highlights break up like crumpled metal
     float jitter = 0.0f;          // metres: each dented vertex is also moved by up to +-jitter (times the falloff) in a random direction (hash of its position)
     float vertical_scale = 2.0f;  // distances along y count this many times: the dent reaches half as far up and down (the roof edge is not the flank's neighbour)
+    float roof_coupling = 0.0f;  // 0..1: vertices above `roof_start` (fraction of the box's half height) are dented by their distance on the ground plane alone (the vertical part dropped), times this: a flank or front hit at mid height still crumples the roof and the pillars above it. 0 = off
+    float roof_start = 0.45f;
     float normal_push = 0.0f;    // 0..1: how much of the push goes along -normal of the vertex's surface (crumples the flank) instead of along the hit direction
 };
 
@@ -40,6 +42,36 @@ float hit_strength(float dv_magnitude, const Params &params);
 
 // 1 at the contact point, 0 at `radius` and beyond, smooth (1 - t)^2 (1 + 2t) between: 0.5 at half the radius.
 float falloff(float distance, float radius);
+
+// Tells a hit from a discontinuity of the simulation. The game changes a car's velocity without any contact at a race start (the rolling start of a Time Trial sets
+// the speed to exactly 50 km/h when the countdown ends), after a retry (the host compares with the previous race's last sample) and when a car is put back on the
+// track (reset): a one-step velocity change that reads as a hit and dented the car where nothing touched it.
+struct StepFilterParams {
+    std::uint32_t gap_vblanks = 60;        // no world step for this many vblanks: a new race (or a pause): start again
+    std::uint32_t warmup_steps = 30;       // steps after a start that never count
+    float teleport_margin = 1.0f;          // metres: a position jump larger than the car could have travelled (plus this) is a teleport
+    float start_speed = 13.8889f;          // m/s: the speed the game sets at a rolling start (50 km/h)
+    float start_tolerance = 0.06f;
+    std::uint32_t start_window_steps = 1500;  // the rolling start's speed set happens within this many steps of the first step
+};
+
+class StepFilter {
+public:
+    explicit StepFilter(StepFilterParams params = {}) : params_(params) {}
+    // Once per world step of the player's car: the game's vblank count, the car's position (metres) and speed (m/s) after the step, the velocity change of the step
+    // (|dv|, m/s), the yaw-rate jump and the off-track flag. True when the step may be a real impact.
+    bool accept(std::uint64_t vblank, const float position[3], float speed, float dv_magnitude, float yaw_rate_jump, bool off_track);
+    void reset();
+
+private:
+    StepFilterParams params_;
+    bool have_ = false;
+    std::uint64_t last_vblank_ = 0;
+    float last_position_[3] = {0, 0, 0};
+    float last_speed_ = 0;
+    std::uint32_t warm_ = 0;
+    std::uint32_t since_start_ = 0;
+};
 
 // A body mesh as the mod edits it: s16 positions (x, y, z per vertex) and the originals, kept so the dents can be undone.
 struct Body {
