@@ -25,6 +25,12 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
    The roll is about the car's forward axis, so it only tips the car while that axis is near horizontal (0.3.0): the held rate fades out as
    the nose points up or down (full up to |forward.z| 0.5, none from 0.8) and the drive ends there. Before, a car standing on its nose got the
    roll rate about a vertical axis and spun like a top.
+   **The pitch limit (0.4.0).** The game builds the body's axes from three Euler angles (yaw, pitch, roll about the forward axis; the forward axis' height is
+   `sin(pitch)`: asm of `0x0893C3E4`). Its tilt clamp `0x0893E0FC` holds pitch (`K+0x6FC`) and roll (`K+0x700`) at 35 degrees with the same flag the mod lifts, so
+   lifting it for the roll also freed the pitch: a hard hit saturates the pitch rate at 1.57 rad/s for ~25 steps (measured on the barrier route), the nose can
+   go to vertical, and at pitch +-90 degrees yaw and roll turn about the same axis (a gimbal lock): the car stands on its tail and spins like a top. The fade of the
+   roll drive above does not help there. The mod now keeps the game's own pitch limit itself: every step before the car's step, a pitch past 35 degrees is put back
+   at 35 and its Euler rate zeroed, as the stock clamp does; the roll stays free. Only the player's car (AI cars still lose the whole clamp, see Known limits).
    **Replays (0.3.0).** The game's replay re-simulates the race from the recorded pad stream, so the mod acts in the replay too, from a clean
    state when the replay starts (the same car; entry byte `+0xA8` turns 1): the hit falls on the same step and the car rolls as it did live.
    Before, the mod skipped the replay and the replayed car drove on upright, off the recorded line.
@@ -49,17 +55,18 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
 
 | key | default | meaning |
 | --- | --- | --- |
-| `style` | `"realistic"` | `realistic`: only big impacts roll the car. `arcade`: the threshold is halved and the gain x1.5, so smaller hits roll it |
-| `threshold` | `3.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
-| `gain` | `2.5` | roll rate (rad/s) per m/s above the threshold (0 - 50) |
-| `cap` | `12.0` | largest roll rate (rad/s) the mod asks for (0 - 30) |
+| `style` | `"realistic"` | `realistic`: only severe impacts roll the car (a guard rail at ~90 km/h leans it, it does not flip it). `arcade`: the threshold is halved and the gain x1.5, so smaller hits roll it (with the 0.4.0 numbers an arcade barrier hit flips the car like 0.3.0 did) |
+| `threshold` | `6.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
+| `gain` | `0.9` | roll rate (rad/s) per m/s above the threshold (0 - 50) |
+| `cap` | `8.0` | largest roll rate (rad/s) the mod asks for (0 - 30) |
 | `body_box` | `true` | the body box on or off (`false` = the stock tumble, the roof sinks into the road) |
 | `box_height` | `0.8` | the box's roof above the car's origin (m, 0.5 - 3) |
 | `box_kick_cap` | `0.5` | largest speed (m/s) away from the ground the car keeps in a step where its body touches it (0.1 - 20) |
 
 An invalid value is logged and the default is used. Reference points (measured on the `rollover` pad route): the barrier at the end of the
-straight at ~38 m/s gives ~8.3 m/s of lateral change (rate 12, a tumble past upside down); the car lands, the springs bring it back and
-it drives on.
+straight at ~38 m/s gives ~8.3 m/s of lateral change: 0.3.0 (threshold 3, gain 2.5, cap 12) asked 12 rad/s for it and the car always ended on its
+roof; 0.4.0 (6 / 0.9 / 8) asks ~2 rad/s, a lean, and the car drives on. A drive of R rad/s held 40 steps turns the car about R/3 rad and the car goes over
+only past ~1 rad (its centre of mass over the wheel edge), so the flip needs ~5 rad/s: a lateral change of ~12 m/s in one step (`arcade`: ~7 m/s).
 
 ## Known limits
 

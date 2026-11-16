@@ -14,7 +14,7 @@ static Settings parse(const std::map<std::string, std::string> &m, std::vector<s
                           [&](const std::string &w) { warns->push_back(w); });
 }
 static bool near(float a, float b) { return std::fabs(a - b) < 1e-4f; }
-static Settings base() {  // round numbers: threshold 3 m/s, 2 rad/s per m/s, cap 9 rad/s (the shipped defaults are 3 / 2.5 / 12)
+static Settings base() {  // round numbers: threshold 3 m/s, 2 rad/s per m/s, cap 9 rad/s (the shipped defaults are 6 / 0.9 / 8)
     Settings s;
     s.threshold = 3.0f;
     s.gain = 2.0f;
@@ -25,17 +25,17 @@ static Settings base() {  // round numbers: threshold 3 m/s, 2 rad/s per m/s, ca
 static void settings_defaults_and_invalid() {
     std::vector<std::string> w;
     Settings d = parse({}, &w);
-    assert(w.empty() && d.style == Style::Realistic && d.threshold == 3.0f && d.gain == 2.5f && d.cap == 12.0f && d.sabotage == 0);
+    assert(w.empty() && d.style == Style::Realistic && d.threshold == 6.0f && d.gain == 0.9f && d.cap == 8.0f && d.sabotage == 0);
     Settings s = parse({{"style", "arcade"}, {"threshold", "1.5"}, {"gain", "4"}, {"cap", "12"}}, &w);
     assert(w.empty() && s.style == Style::Arcade && s.threshold == 1.5f && s.gain == 4.0f && s.cap == 12.0f);
     w.clear();
     s = parse({{"style", "drift"}, {"threshold", "abc"}, {"gain", "-1"}, {"cap", "99"}}, &w);
-    assert(w.size() == 4 && s.style == Style::Realistic && s.threshold == 3.0f && s.gain == 2.5f && s.cap == 12.0f);
+    assert(w.size() == 4 && s.style == Style::Realistic && s.threshold == 6.0f && s.gain == 0.9f && s.cap == 8.0f);
     w.clear();
     s = parse({{"threshold", "0"}}, &w);  // a zero threshold would roll the car in normal driving: invalid
-    assert(w.size() == 1 && s.threshold == 3.0f);
+    assert(w.size() == 1 && s.threshold == 6.0f);
     s = parse({{"threshold", "nan"}}, &w);
-    assert(w.size() == 2 && s.threshold == 3.0f);
+    assert(w.size() == 2 && s.threshold == 6.0f);
 }
 
 static void body_box_settings() {
@@ -54,6 +54,32 @@ static void style_changes_threshold_and_gain() {
     s.style = Style::Arcade;
     assert(near(effective_threshold(s), 1.5f) && near(effective_gain(s), 3.0f));
     assert(effective_threshold(s) < 3.0f);
+}
+
+// 0.4.0: the shipped defaults against the measured barrier hit of the `rollover` route (lateral change 8.3 m/s in one step, ~25 m/s into a
+// guard rail): 0.3.0 asked 12 rad/s for it (3 / 2.5 / 12) and the car always ended on its roof; a drive of R rad/s held 40 steps with a linear decay
+// turns the car R/3 rad, and the car goes over only past ~1 rad (the centre of mass over the wheel edge), so a wall hit must stay under ~4 rad/s.
+static void shipped_defaults_barrier_hit_does_not_flip() {
+    std::vector<std::string> w0; const Settings d = parse({}, &w0);
+    assert(roll_rate_for(d, 8.3f) > 0.0f && roll_rate_for(d, 8.3f) < 3.0f);     // a lean, not a flip
+    assert(near(roll_rate_for(d, 5.9f), 0.0f));                                 // an ordinary scrape: nothing
+    assert(near(roll_rate_for(d, 30.0f), 8.0f));                                // a huge hit still flips it (capped)
+    assert(roll_rate_for(d, 14.0f) > 6.0f);                                     // a severe hit does too
+    Settings a = d;
+    a.style = Style::Arcade;                                                    // arcade keeps the easy flip
+    assert(roll_rate_for(a, 8.3f) > 6.0f);
+}
+
+static void pitch_limit_holds_the_nose() {
+    float out = 99.0f;
+    assert(!limit_pitch(0.0f, kPitchLimit, &out) && out == 0.0f);                 // level: untouched
+    assert(!limit_pitch(0.6f, kPitchLimit, &out) && out == 0.6f);                 // inside the 35 degrees the game allows
+    assert(!limit_pitch(-0.6f, kPitchLimit, &out) && out == -0.6f);
+    assert(limit_pitch(0.62f, kPitchLimit, &out) && near(out, kPitchLimit));      // beyond: held at the limit, keeping the sign
+    assert(limit_pitch(-1.4f, kPitchLimit, &out) && near(out, -kPitchLimit));
+    assert(limit_pitch(1.5707f, kPitchLimit, &out) && near(out, kPitchLimit));    // nose vertical (gimbal lock): never reaches the integrator
+    assert(limit_pitch(std::nanf(""), kPitchLimit, &out) && out == 0.0f);          // garbage: level
+    assert(near(kPitchLimit, 0.6109f) && std::sin(kPitchLimit) < 0.58f && std::sin(kPitchLimit) < kRollAxisNone);  // the held nose keeps the roll drive's axis horizontal enough
 }
 
 static void roll_rate_threshold_and_cap() {
@@ -225,7 +251,9 @@ int main() {
     settings_defaults_and_invalid();
     body_box_settings();
     style_changes_threshold_and_gain();
+    pitch_limit_holds_the_nose();
     roll_rate_threshold_and_cap();
+    shipped_defaults_barrier_hit_does_not_flip();
     tracker_ignores_normal_driving();
     tracker_hit_signs_and_decay();
     tracker_other_side_and_stronger_hit();

@@ -47,6 +47,7 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     }
 #if defined(ROLLOVER_SABOTAGE)
     s.sabotage = ROLLOVER_SABOTAGE;  // the in-game check's sabotage builds (it must fail with them)
+    if (s.sabotage == 11) { s.threshold = 3.0f; s.gain = 2.5f; s.cap = 12.0f; }  // the 0.3.0 numbers whatever mod.toml says
 #endif
     return s;
 }
@@ -109,6 +110,23 @@ float roll_axis_weight(const float fwd[3]) {
     if (!std::isfinite(z) || !std::isfinite(fwd[0]) || !std::isfinite(fwd[1]) || z >= kRollAxisNone) return 0.0f;
     if (z <= kRollAxisFull) return 1.0f;
     return (kRollAxisNone - z) / (kRollAxisNone - kRollAxisFull);
+}
+
+bool limit_pitch(float pitch, float limit, float *clamped) {
+    if (!std::isfinite(pitch)) {
+        *clamped = 0.0f;
+        return true;
+    }
+    if (pitch > limit) {
+        *clamped = limit;
+        return true;
+    }
+    if (pitch < -limit) {
+        *clamped = -limit;
+        return true;
+    }
+    *clamped = pitch;
+    return false;
 }
 
 float apply_rate(float current, float held, float cap) {
