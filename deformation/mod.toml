@@ -37,3 +37,5 @@ right_axis = "x"
 right_sign = 1
 up_axis = "y"
 up_sign = 1
+# 1 = a model built facing backwards (seen from the chase camera at the first frame) gets forward and right flipped (0.2.1: a front hit dented an Audi's rear); 0 = always the axes above
+facing_auto = 1

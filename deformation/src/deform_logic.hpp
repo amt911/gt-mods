@@ -99,4 +99,9 @@ std::size_t apply_dent(Body &body, const Frame &frame, Vec3 contact, Vec3 inward
 // Puts every vertex back.
 void restore(Body &body);
 
+// Which way a model faces (0.2.1). The chase camera looks along the car, so the forward axis of a model built facing forward points into the
+// screen (view z ~ +1, measured 2026-11-17 on the deformation route). A model built facing backwards (the user's Audi: a front hit dented the
+// rear) shows view z ~ -1: forward and right flip (a half turn about up). -1 = flip, +1 = as configured, 0 = the camera is not behind the car.
+int facing_sign(float forward_view_z);
+
 } // namespace deform

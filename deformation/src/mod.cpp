@@ -28,6 +28,8 @@ deform::StepFilter g_filter;  // a velocity change that is no hit: race start, r
 uint32_t g_min_vertices = 100;
 int g_axis[3] = {2, 0, 1};      // model axis (0 x, 1 y, 2 z) of the body's forward, right, up
 float g_sign[3] = {1.f, 1.f, 1.f};
+float g_sign_config[3] = {1.f, 1.f, 1.f};  // the signs mod.toml gave (g_sign may flip per car)
+bool g_facing_auto = true;  // 0.2.1: flip forward/right for a model built facing backwards (facing_sign)
 
 struct Part {
     uint32_t blob = 0;
@@ -145,7 +147,19 @@ void on_mesh_draw(GtModCtx *ctx) {
         float m[12];
         if (g_api->draw_matrix(g_self, ctx, m) == 0) {
             for (int i = 0; i < 3; ++i) g_frame.half[i] = std::sqrt(m[3 * i] * m[3 * i] + m[3 * i + 1] * m[3 * i + 1] + m[3 * i + 2] * m[3 * i + 2]);
-            if (g_frame.half[0] > 0.05f && g_frame.half[1] > 0.05f && g_frame.half[2] > 0.05f) g_have_frame.store(true, std::memory_order_release);
+            if (g_frame.half[0] > 0.05f && g_frame.half[1] > 0.05f && g_frame.half[2] > 0.05f) {
+                const int f = g_axis[0];  // the model axis taken as forward: its image in view space (row f of the matrix)
+                const float len = g_frame.half[f];
+                char line[160];
+                std::snprintf(line, sizeof line, "FACING forward_axis=%d view=(%.2f %.2f %.2f)", f, m[3 * f] / len, m[3 * f + 1] / len, m[3 * f + 2] / len);
+                g_api->log(g_self, line);
+                if (g_facing_auto && deform::facing_sign(m[3 * f + 2] / len) < 0) {  // built facing backwards: forward and right flip
+                    g_sign[0] = -g_sign_config[0];
+                    g_sign[1] = -g_sign_config[1];
+                    g_api->log(g_self, "FACING flipped: this model faces -forward (forward and right signs inverted for this car)");
+                }
+                g_have_frame.store(true, std::memory_order_release);
+            }
         }
     }
     g_api->call_original(ctx);
@@ -193,6 +207,7 @@ void release_all(GtModCtx *ctx) {
         g_part_blobs.clear();
     }
     g_have_frame.store(false, std::memory_order_release);
+    for (int i = 0; i < 3; ++i) g_sign[i] = g_sign_config[i];  // a new car decides its facing again
     g_examined.clear();
     g_armed.store(false, std::memory_order_release);
     g_model_cars.clear();
@@ -342,6 +357,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     g_params.cap = setting("cap", g_params.cap);
     g_params.normal_push = setting("normal_push", g_params.normal_push);
     g_params.roof_coupling = setting("roof_coupling", 0.7f);
+    g_facing_auto = setting("facing_auto", 1.f) != 0.f;
     g_params.roof_start = setting("roof_start", g_params.roof_start);
     g_params.vertical_scale = setting("vertical_scale", g_params.vertical_scale);
     g_params.noise = setting("noise", g_params.noise);
@@ -350,6 +366,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     axis_setting("forward", 0, 2);
     axis_setting("right", 1, 0);
     axis_setting("up", 2, 1);
+    for (int i = 0; i < 3; ++i) g_sign_config[i] = g_sign[i];
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;

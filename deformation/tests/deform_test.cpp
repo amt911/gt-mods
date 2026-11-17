@@ -24,6 +24,7 @@ static float metres(const Body &b, size_t v, int c, const Frame &f, bool origina
 }
 
 int main() {
+    assert(deform::facing_sign(1.0f) == 1 && deform::facing_sign(-0.98f) == -1 && deform::facing_sign(0.1f) == 0 && deform::facing_sign(0.0f / 0.0f) == 0);
     Params p;
     Frame frame;
     frame.half[0] = 1.0f; frame.half[1] = 0.7f; frame.half[2] = 2.0f;

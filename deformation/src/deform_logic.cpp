@@ -181,4 +181,9 @@ void restore(Body &b) {
     std::fill(b.dented.begin(), b.dented.end(), 0.0f);
 }
 
+int facing_sign(float forward_view_z) {
+    if (!(std::fabs(forward_view_z) >= 0.5f)) return 0;
+    return forward_view_z > 0.0f ? 1 : -1;
+}
+
 } // namespace deform
