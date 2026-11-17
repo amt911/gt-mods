@@ -24,9 +24,12 @@ namespace {
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
 deform::Params g_params;
+deform::StepFilter g_filter;  // a velocity change that is no hit: race start, retry, reset (deform_logic)
 uint32_t g_min_vertices = 100;
 int g_axis[3] = {2, 0, 1};      // model axis (0 x, 1 y, 2 z) of the body's forward, right, up
 float g_sign[3] = {1.f, 1.f, 1.f};
+float g_sign_config[3] = {1.f, 1.f, 1.f};  // the signs mod.toml gave (g_sign may flip per car)
+bool g_facing_auto = true;  // 0.2.1: flip forward/right for a model built facing backwards (facing_sign)
 
 struct Part {
     uint32_t blob = 0;
@@ -88,7 +91,17 @@ void on_step(GtModCtx *ctx) {
     g_player = car;
     GtCarImpact impact;
     if (g_api->car_impact(g_self, ctx, g_world, car, &impact) != 0) return;
+    if (std::getenv("GT_DEFORM_TRACE") && (g_steps < 900 || impact.dv_magnitude > 1.0f)) { char t[240]; std::snprintf(t, sizeof t, "TRACE step=%u vblank=%llu car=%08x dv=%.2f body=(%.2f %.2f %.2f) speed=%.2f jump=%.2f off=%d", g_steps, (unsigned long long)g_last_step_vblank, car, impact.dv_magnitude, impact.dv_body[0], impact.dv_body[1], impact.dv_body[2], impact.speed_before, impact.yaw_rate_jump, impact.off_track); g_api->log(g_self, t); }
+    GtCarState state;
+    if (g_api->car_state(g_self, ctx, car, &state) != 0) return;
+    const bool counts = g_filter.accept(g_last_step_vblank, state.position, state.speed, impact.dv_magnitude, impact.yaw_rate_jump, impact.off_track != 0);
     if (!deform::hit_detected(impact.dv_magnitude, g_params.threshold)) return;
+    if (!counts) {  // the game changed the velocity without a contact (race start, retry, reset): not a hit
+        char line[200];
+        std::snprintf(line, sizeof line, "SKIP step=%u vblank=%llu dv=%.2f speed=%.2f (start, retry or reset: not a hit)", g_steps, static_cast<unsigned long long>(g_last_step_vblank), impact.dv_magnitude, state.speed);
+        g_api->log(g_self, line);
+        return;
+    }
     const float strength = deform::hit_strength(impact.dv_magnitude, g_params);
     g_armed.store(true, std::memory_order_release);
     char line[220];
@@ -102,7 +115,10 @@ void on_step(GtModCtx *ctx) {
 // The per-car view update: learn which model belongs to which car.
 void on_car_draw(GtModCtx *ctx) {
     uint32_t car = 0, model = 0;
-    if (g_api->draw_car_model(g_self, ctx, &car, &model) == 0) {
+    static unsigned traced_draws = 0;
+    const int link_rc = g_api->draw_car_model(g_self, ctx, &car, &model);
+    if (std::getenv("GT_DEFORM_TRACE") && traced_draws < 40) { ++traced_draws; char t[200]; std::snprintf(t, sizeof t, "TRACE-DRAW rc=%d car=%08x model=%08x player=%08x", link_rc, car, model, g_player); g_api->log(g_self, t); }
+    if (link_rc == 0) {
         g_model_cars[model].insert(car);
         if (car == g_player && g_player != 0u) {
             if (model != g_player_model) logf("PLAYER model=%08x", model);
@@ -131,7 +147,19 @@ void on_mesh_draw(GtModCtx *ctx) {
         float m[12];
         if (g_api->draw_matrix(g_self, ctx, m) == 0) {
             for (int i = 0; i < 3; ++i) g_frame.half[i] = std::sqrt(m[3 * i] * m[3 * i] + m[3 * i + 1] * m[3 * i + 1] + m[3 * i + 2] * m[3 * i + 2]);
-            if (g_frame.half[0] > 0.05f && g_frame.half[1] > 0.05f && g_frame.half[2] > 0.05f) g_have_frame.store(true, std::memory_order_release);
+            if (g_frame.half[0] > 0.05f && g_frame.half[1] > 0.05f && g_frame.half[2] > 0.05f) {
+                const int f = g_axis[0];  // the model axis taken as forward: its image in view space (row f of the matrix)
+                const float len = g_frame.half[f];
+                char line[160];
+                std::snprintf(line, sizeof line, "FACING forward_axis=%d view=(%.2f %.2f %.2f)", f, m[3 * f] / len, m[3 * f + 1] / len, m[3 * f + 2] / len);
+                g_api->log(g_self, line);
+                if (g_facing_auto && deform::facing_sign(m[3 * f + 2] / len) < 0) {  // built facing backwards: forward and right flip
+                    g_sign[0] = -g_sign_config[0];
+                    g_sign[1] = -g_sign_config[1];
+                    g_api->log(g_self, "FACING flipped: this model faces -forward (forward and right signs inverted for this car)");
+                }
+                g_have_frame.store(true, std::memory_order_release);
+            }
         }
     }
     g_api->call_original(ctx);
@@ -179,6 +207,7 @@ void release_all(GtModCtx *ctx) {
         g_part_blobs.clear();
     }
     g_have_frame.store(false, std::memory_order_release);
+    for (int i = 0; i < 3; ++i) g_sign[i] = g_sign_config[i];  // a new car decides its facing again
     g_examined.clear();
     g_armed.store(false, std::memory_order_release);
     g_model_cars.clear();
@@ -260,7 +289,7 @@ void apply_hit(GtModCtx *ctx, const Hit &hit) {
     // the hit pushed the car along -c: the contact is where the ray along c leaves the car's box, the dent goes into the body along -c
     const deform::Vec3 contact = deform::box_contact(g_frame, {c[0], c[1], c[2]});
     const deform::Vec3 inward{-c[0], -c[1], -c[2]};
-    unsigned moved_total = 0;
+    unsigned moved_total = 0, roof_moved = 0;
     for (size_t p = 0; p < g_parts.size(); ++p) {
         Part &part = g_parts[p];
         const std::vector<int16_t> before = part.body.positions;
@@ -268,6 +297,8 @@ void apply_hit(GtModCtx *ctx, const Hit &hit) {
         const size_t moved = deform::apply_dent(part.body, g_frame, contact, inward, hit.strength, g_params);
         if (moved == 0) continue;
         moved_total += static_cast<unsigned>(moved);
+        for (size_t v = 0; v < part.body.dented.size(); ++v)  // vertices of the roof zone that this hit moved (the roof is dented by its ground-plane distance, deform_logic)
+            if (part.body.original[3 * v + 1] > g_params.roof_start * 32767.f && part.body.positions[3 * v + 1] != before[3 * v + 1]) ++roof_moved;
         for (size_t v = 0; v < part.body.dented.size(); ++v)
             if (std::memcmp(&before[3 * v], &part.body.positions[3 * v], 6) != 0 ||
                 (!part.body.normals.empty() && std::memcmp(&before_normals[3 * v], &part.body.normals[3 * v], 3) != 0)) {
@@ -282,7 +313,7 @@ void apply_hit(GtModCtx *ctx, const Hit &hit) {
             }
     }
     char line[160];
-    std::snprintf(line, sizeof line, "DENT vertices=%u depth_mm=%u box=(%.2f %.2f %.2f) contact=(%.2f %.2f %.2f)", moved_total, static_cast<unsigned>(hit.strength * 1000.f), g_frame.half[0], g_frame.half[1], g_frame.half[2], contact.x, contact.y, contact.z);
+    std::snprintf(line, sizeof line, "DENT vertices=%u roof=%u depth_mm=%u box=(%.2f %.2f %.2f) contact=(%.2f %.2f %.2f)", moved_total, roof_moved, static_cast<unsigned>(hit.strength * 1000.f), g_frame.half[0], g_frame.half[1], g_frame.half[2], contact.x, contact.y, contact.z);
     g_api->log(g_self, line);
 }
 
@@ -325,6 +356,9 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     g_params.radius = setting("radius", g_params.radius);
     g_params.cap = setting("cap", g_params.cap);
     g_params.normal_push = setting("normal_push", g_params.normal_push);
+    g_params.roof_coupling = setting("roof_coupling", 0.7f);
+    g_facing_auto = setting("facing_auto", 1.f) != 0.f;
+    g_params.roof_start = setting("roof_start", g_params.roof_start);
     g_params.vertical_scale = setting("vertical_scale", g_params.vertical_scale);
     g_params.noise = setting("noise", g_params.noise);
     g_params.jitter = setting("jitter", g_params.jitter);
@@ -332,6 +366,7 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     axis_setting("forward", 0, 2);
     axis_setting("right", 1, 0);
     axis_setting("up", 2, 1);
+    for (int i = 0; i < 3; ++i) g_sign_config[i] = g_sign[i];
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;

@@ -1,6 +1,6 @@
 id = "deformation"
 name = "Crash deformation"
-version = "0.2.0"
+version = "0.2.1"
 library = "libdeformation.so"
 api = 5
 enabled = false
@@ -21,6 +21,10 @@ normal_push = 0.6
 # vertex's position (duplicated vertices stay together)
 noise = 0.35
 jitter = 0.04
+# 0..1: the roof and what is above the beltline (higher than roof_start x the box's half height) is dented by its ground-plane distance to the contact point alone, times this: a flank or
+# front hit at mid height crumples the roof and pillars too (0.2.0 left the roof untouched: the vertical reach stopped under it). 0 = off
+roof_coupling = 0.7
+roof_start = 0.45
 # the dent reaches this many times less far up and down than along the car (distances along y count double)
 vertical_scale = 2.0
 # parts with fewer vertices (mirrors, lights, glass slivers) are left alone
@@ -33,3 +37,5 @@ right_axis = "x"
 right_sign = 1
 up_axis = "y"
 up_sign = 1
+# 1 = a model built facing backwards (seen from the chase camera at the first frame) gets forward and right flipped (0.2.1: a front hit dented an Audi's rear); 0 = always the axes above
+facing_auto = 1
