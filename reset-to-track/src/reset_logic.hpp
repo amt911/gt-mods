@@ -32,7 +32,7 @@ struct Settings {
     float cooldown_ms = 1000.0f; // minimum time between two resets
     float rewind_ms = 2500.0f;   // restore a pose at least this old (the newest such one)
     float ahead_m = kAheadMeters; // length of the path after a pose that must stay on its straight line (8 - 100 m)
-    int sabotage = 0;            // check builds only: 1 = rates not zeroed, 2 = newest pose, off-track included, 3 = no rewind (newest good pose), 5 = the straight-ahead rule off (old pick)
+    int sabotage = 0;            // check builds only: 1 = rates not zeroed, 2 = newest pose, off-track included, 3 = no rewind (newest good pose), 5 = the straight-ahead rule off (old pick), 6 = no any-age fallback (0.3.0)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.

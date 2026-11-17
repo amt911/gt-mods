@@ -144,7 +144,13 @@ std::optional<Pose> Resetter::step(const CarSample &sample, const Pose &current,
     if (sabotage_newest || s_.sabotage == 3 || s_.sabotage == 5)  // sabotage builds 2, 3, 5: no straight-ahead rule, the old pick (newest pose at least rewind_ms old)
         pick = ring_.pick(now_, sabotage_newest ? 0 : rewind_steps_, sabotage_newest ? (1 << 30) : kMaxPoseAgeSteps);
     else
+    {
         pick = ring_.pick_clear(now_, rewind_steps_, kMaxPoseAgeSteps, s_.ahead_m, kMinAheadMeters, kPathTolerance, &last_run_);
+        // 0.3.1: stuck longer than the age limit (a crash and then wrestling with the car for 8 s), every recorded pose was too old and the
+        // button did nothing ("a veces no va", user 2026-11-16). Then the newest clear pose of any age (the ring only holds the last good ones).
+        if (pick == nullptr && s_.sabotage != 6)
+            pick = ring_.pick_clear(now_, rewind_steps_, 1 << 30, s_.ahead_m, kMinAheadMeters, kPathTolerance, &last_run_);
+    }
     if (pick == nullptr) {
         refused_ = true;
         return std::nullopt;

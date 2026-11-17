@@ -60,7 +60,12 @@ float ai_factor(SlowMo slow, AiSpeed speed, bool freeze_ai);
 // forward basis row, for one step of `dt` seconds.
 constexpr float kNitroThrottle = 0.9f;
 constexpr float kNitroAccel = 6.0f;
-Kin nitro(const Kin &now, float throttle, float dt);
+Kin nitro(const Kin &now, float throttle, float dt, float accel = kNitroAccel);
+// Nitro power (0.6.0): the levels the menu steps through, m/s^2 (index kNitroDefaultLevel = the 0.5.0 strength).
+constexpr float kNitroLevels[] = {3.0f, 6.0f, 10.0f, 15.0f, 25.0f};
+constexpr int kNitroLevelCount = 5, kNitroDefaultLevel = 1;
+// The level nearest to `accel` (the mod.toml setting).
+int nitro_level(float accel);
 
 // Moon gravity: of the velocity a step lost along the car's up row (falling), only kMoonKeep is applied; rising is left alone.
 constexpr float kMoonKeep = 0.3f;
