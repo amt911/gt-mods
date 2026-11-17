@@ -1,6 +1,6 @@
 id = "rollover"
 name = "Rollovers"
-version = "0.3.0"
+version = "0.4.0"
 library = "librollover.so"
 api = 1
 enabled = false
@@ -9,11 +9,11 @@ enabled = false
 # realistic: only big impacts roll the car; arcade: the threshold is halved and the gain raised, so smaller hits roll it
 style = "realistic"
 # lateral velocity change of the car in ONE physics step (m/s) above which a hit tips the car
-threshold = 3.0
+threshold = 6.0
 # roll rate (rad/s) per m/s of lateral velocity change above the threshold
-gain = 2.5
+gain = 0.9
 # largest roll rate (rad/s) the mod ever asks for
-cap = 12.0
+cap = 8.0
 # body collision: a box around the car stops the roof and sides sinking into the road while the car tumbles (untouched while upright)
 body_box = true
 # height of the box's roof above the car's origin (m); the game has no body height, 0.8 puts the roof about 1.2 m over the road, a heuristic

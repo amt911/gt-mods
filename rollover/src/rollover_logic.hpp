@@ -17,13 +17,13 @@ constexpr float kMaxDeltaV = 60.0f;            // a velocity change this big in 
 
 struct Settings {
     Style style = Style::Realistic;
-    float threshold = 3.0f;  // m/s of lateral velocity change in one step
-    float gain = 2.5f;       // rad/s of roll rate per m/s above the threshold
-    float cap = 12.0f;       // rad/s, largest roll rate requested
+    float threshold = 6.0f;  // m/s of lateral velocity change in one step (0.4.0: 6, was 3: a barrier hit at ~90 km/h gave 8 and flipped the car every time)
+    float gain = 0.9f;       // rad/s of roll rate per m/s above the threshold (0.4.0: 0.9, was 2.5)
+    float cap = 8.0f;        // rad/s, largest roll rate requested (0.4.0: 8, was 12)
     bool body_box = true;    // the body box (bodybox.hpp): the tumbling car's body stops at the ground instead of sinking into it
     float box_height = 0.8f;  // m: the box's roof above the body origin (the game has no body height; a heuristic: roof ~1.2 m over the road)
     float box_kick_cap = 0.5f; // m/s: largest speed away from the ground the car keeps in a step where its body touches it (limits the hop; never applied without a contact)
-    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap), 9 = the roll drive also with the forward axis vertical (spinning top), 10 = live only (the mod skips the replay)
+    int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap), 9 = the roll drive also with the forward axis vertical (spinning top), 10 = live only (the mod skips the replay), 12 = no pitch limit (the nose may go past 35 degrees to vertical: the spinning top), 11 = the 0.3.0 defaults (threshold 3, gain 2.5, cap 12: any barrier hit flips the car)
 };
 
 // A missing key keeps the default silently; an invalid value keeps the default and calls `warn` once for that key.
@@ -61,6 +61,14 @@ class Tracker {
 // 0.8, linear between; non-finite input gives 0.
 constexpr float kRollAxisFull = 0.5f, kRollAxisNone = 0.8f;
 float roll_axis_weight(const float fwd[3]);
+
+// The car's pitch angle (Euler angle K+0x6FC) is held at the game's own limit, 35 degrees (the constant 0x3F1C61AA in the tilt clamp 0x0893E0FC),
+// while the roll angle (K+0x700) is free. The game builds the body's three axes from its Euler angles (yaw, pitch, roll about the forward axis: the
+// forward axis' height is sin(pitch)), so a pitch near +-90 degrees is a gimbal lock: yaw and roll turn about the same vertical axis and the car
+// stands on its nose spinning like a top. The tilt clamp that stops it also stops the roll, and the mod lifts it for both (0.4.0 keeps this half).
+constexpr float kPitchLimit = 0.6109f;
+// True when `pitch` is beyond +-`limit` (or not a number); *clamped then holds the limit with its sign (0 for a NaN).
+bool limit_pitch(float pitch, float limit, float *clamped);
 
 // The roll rate to write given the car's current one: the held rate when it is larger in its direction, else untouched (a hit never
 // slows a roll that is already faster the same way); what is written never exceeds `cap` in magnitude.

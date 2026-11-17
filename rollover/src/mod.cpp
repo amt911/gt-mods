@@ -53,6 +53,7 @@ constexpr std::uint32_t kBody = 8;
 constexpr std::uint32_t kPos = 0x10, kForward = 0x1C, kLateral = 0x28, kUp = 0x34, kVel = 0x6CC, kRollRate = 0x6F4, kTiltA = 0x6FC, kTiltB = 0x700;
 // Measured (docs/FACTS.md, rollover): a positive +0x6F4 tips the up vector toward the +0x28 row (the lateral axis); +0x1C is the forward axis.
 constexpr float kRollSign = 1.0f;
+constexpr std::uint32_t kEulerPitchRate = 0x6E4, kBodyPitchRate = 0x6F0, kYawRate = 0x6F8;
 // The flag is lifted only for the readers in the body-motion step 0x08956DC8 (called once per car per physics step; a hook on the clamp
 // function 0x0893E0FC itself never fires in `--decomp off`, its caller is in the same recompiled unit). Two mechanisms, see kClampRa. Its readers are the tilt clamp (0x0893E0FC, the one that must see 1), the Euler angle
 // wrap (0x08956B20: keeps the angles in +-pi through a full roll) and 0x08945F6C, whose flag branch only does something when the flip
@@ -76,6 +77,9 @@ bool g_fake_from_move = false;  // GT_MOD_ROLLOVER_FAKE=m<steps>:<dv>: <steps> a
 long g_moved_at = -1;          // the player-car step at which the car first moved
 float g_fake_dv = 0.0f;
 float g_fake_offset[3] = {0, 0, 0};
+unsigned g_pitch_clamps = 0;  // steps in which the pitch angle was held at the game's limit
+long g_fake_pitch_step = -1;   // GT_MOD_ROLLOVER_FAKE_PITCH=m<steps>:<rate>: a nose-up pitch rate kick, see step_body
+float g_fake_pitch_rate = 0.0f;
 bool g_replay = false;  // the player car is in its replay (the race's state was reset when it started)
 std::uint32_t g_ras[32], g_ra_count = 0;
 bool g_in_body = false, g_in_flip = false, g_only_step = false;
@@ -118,14 +122,14 @@ std::uint32_t find_player_car(GtModCtx *c, std::uint32_t world, bool *replay) {
 // rate=<+0x6F4> flag=<+0x74B>/<+0x74C> held=<steps left of the held roll rate>`
 void log_state(GtModCtx *c, std::uint32_t body, float held) {
     const GtModApi &a = *g_api;
-    char line[420];
+    char line[520];
     std::snprintf(line, sizeof line,
-                  "st=%u imp=%u since=%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f fwd=%.2f,%.2f,%.2f lat=%.2f,%.2f,%.2f up=%.3f,%.3f,%.3f tilt=%.3f,%.3f rate=%.2f flag=%02X/%d held=%d(%.2f) body_calls=%u",
+                  "st=%u imp=%u since=%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f fwd=%.2f,%.2f,%.2f lat=%.2f,%.2f,%.2f up=%.3f,%.3f,%.3f tilt=%.3f,%.3f rate=%.2f flag=%02X/%d held=%d(%.2f) body_calls=%u pclamp=%u prate=%.2f,%.2f yrate=%.2f",
                   g_car_steps, g_impulses, g_impulses == 0 ? -1 : static_cast<int>(g_since_impulse), a.readf(c, body + kPos), a.readf(c, body + kPos + 4),
                   a.readf(c, body + kPos + 8), a.readf(c, body + kVel), a.readf(c, body + kVel + 4), a.readf(c, body + kVel + 8), a.readf(c, body + kForward),
                   a.readf(c, body + kForward + 4), a.readf(c, body + kForward + 8), a.readf(c, body + kLateral), a.readf(c, body + kLateral + 4), a.readf(c, body + kLateral + 8), a.readf(c, body + kUp), a.readf(c, body + kUp + 4), a.readf(c, body + kUp + 8),
                   a.readf(c, body + kTiltA), a.readf(c, body + kTiltB), a.readf(c, body + kRollRate), a.read8(c, body + 0x74B),
-                  static_cast<int>(static_cast<std::int16_t>(a.read16(c, body + 0x74C))), g_tracker->steps_left(), held, g_body_hits);
+                  static_cast<int>(static_cast<std::int16_t>(a.read16(c, body + 0x74C))), g_tracker->steps_left(), held, g_body_hits, g_pitch_clamps, a.readf(c, body + kEulerPitchRate), a.readf(c, body + kBodyPitchRate), a.readf(c, body + kYawRate));
     a.log(g_self, line);
 }
 
@@ -311,6 +315,9 @@ void body_box_step(GtModCtx *c, std::uint32_t car, std::uint32_t body, bool appl
 // Everything that reads the player car. A read outside PSP RAM throws (the host's psprecomp::Error); the world/slot pointers can hold stale
 // values once a race is over, and an exception out of a hook would abort the game, so on_step treats it as "no player car" (defensive: the
 // `--decomp on` abort seen ~12000 steps after the route is in the game's own func_08BD4270, not here; docs/FINDINGS.md).
+constexpr unsigned kFakePitchSteps = 60;
+long fake_at_pitch(long from_moved) { return g_moved_at < 0 ? (1L << 40) : g_moved_at + from_moved; }  // counted from the car's first movement
+
 void step_body(GtModCtx *c) {
     const GtModApi &a = *g_api;
     bool replay = false;
@@ -334,6 +341,7 @@ void step_body(GtModCtx *c) {
         g_car = car;
         g_car_steps = 0;
         g_impulses = 0;
+        g_pitch_clamps = 0;
         g_moved_at = -1;
         g_have_prev_vel = false;
     }
@@ -373,6 +381,27 @@ void step_body(GtModCtx *c) {
     }
     for (int i = 0; i < 3; ++i) g_prev_vel[i] = vel[i];
     g_have_prev_vel = true;
+    // The pitch limit (the half of the game's tilt clamp the mod must keep, see rollover_logic.hpp): the game holds the pitch angle at 35 degrees and
+    // zeroes its rate; with the clamp lifted for the roll a pitch kick (a hard hit saturates the pitch rate at 1.57 rad/s for ~25 steps) would turn the
+    // nose to vertical, where the Euler angles lock and the car spins about the vertical axis. Checked before the step, so it overshoots by one step's turn.
+    if (g_fake_pitch_step >= 0 && g_fake_pitch_rate != 0.0f && static_cast<long>(g_car_steps) >= fake_at_pitch(g_fake_pitch_step) &&
+        static_cast<long>(g_car_steps) < fake_at_pitch(g_fake_pitch_step) + kFakePitchSteps) {  // measurement aid: the pitch kick of a hard hit, held
+        if (g_log && static_cast<long>(g_car_steps) == fake_at_pitch(g_fake_pitch_step)) {
+            char line[100];
+            std::snprintf(line, sizeof line, "FAKEPITCH st=%u rate=%.2f steps=%u", g_car_steps, g_fake_pitch_rate, kFakePitchSteps);
+            a.log(g_self, line);
+        }
+        a.writef(c, body + kBodyPitchRate, g_fake_pitch_rate);
+        a.writef(c, body + kEulerPitchRate, g_fake_pitch_rate);
+    }
+    if (g_settings.sabotage != 12) {
+        float held_pitch = 0.0f;
+        if (rollover::limit_pitch(a.readf(c, body + kTiltA), rollover::kPitchLimit, &held_pitch)) {
+            a.writef(c, body + kTiltA, held_pitch);
+            a.writef(c, body + kEulerPitchRate, 0.0f);
+            ++g_pitch_clamps;
+        }
+    }
     const bool was_idle = g_tracker->steps_left() == 0;
     float held = g_tracker->step(vel, right, pos);
     if (held != 0.0f && was_idle) {  // a hit started a drive
@@ -448,6 +477,14 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
         if (std::sscanf(fake + (g_fake_from_move ? 1 : 0), "%ld:%f", &step, &dv) == 2 && step >= 0 && std::isfinite(dv)) {
             g_fake_step = step;
             g_fake_dv = dv;
+        }
+    }
+    if (const char *fp = std::getenv("GT_MOD_ROLLOVER_FAKE_PITCH")) {  // "m<steps>:<rate>": a pitch rate (rad/s) written for 60 steps from <steps> after the car first moves
+        float rate = 0.0f;
+        long step = 0;
+        if (std::sscanf(fp[0] == 'm' ? fp + 1 : fp, "%ld:%f", &step, &rate) == 2 && step >= 0 && std::isfinite(rate)) {
+            g_fake_pitch_step = step;
+            g_fake_pitch_rate = rate;
         }
     }
     g_only_step = std::getenv("GT_MOD_ROLLOVER_ONLY_STEP") != nullptr;  // measurement aid (docs/FINDINGS.md): the step hook alone
