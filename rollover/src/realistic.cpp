@@ -148,7 +148,8 @@ void write_pose(GtModCtx *c, std::uint32_t car, bool send) {
     g.wrote = true;
 }
 
-void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float fake_dv[3]) {
+void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float fake_dv[3], const GtCarDimensions &dims) {
+    size_hull(dims);  // the floor as measured while driving
     ++g.takeovers;
     g_api->tilt_free(g_self, c, g.car, 1);
     const double dt = kDt;
@@ -202,15 +203,18 @@ void on_step(GtModCtx *c) {
     }
     const double speed2 = double(s.velocity[0]) * s.velocity[0] + double(s.velocity[1]) * s.velocity[1] + double(s.velocity[2]) * s.velocity[2];
     if (g.moved_at < 0 && speed2 > 1.0) g.moved_at = g.steps;
-    // the origin's height over the road while the car sits level on its wheels: the hull's floor
-    if (!g_sup->simulating() && !g.rest_measured && s.basis[8] > 0.98f) {
+    // the origin's height over the road while the car drives level on its wheels (measured 2026-11-18: 0.15 m standing on the grid, ~0.35 m at speed: the
+    // wheel records' height and the suspension differ), a running average over the level steps at speed: the hull's floor is where the tyres are
+    if (!g_sup->simulating() && s.basis[8] > 0.98f && speed2 > 25.0) {
         double mh = 0;
         int n = 0;
         for (const GtWheelContact &w : wc) if (w.valid) { mh += w.ground_height; ++n; }
         if (n == 4) {
-            g.rest_height = static_cast<float>(s.position[2] - mh / 4);
-            g.rest_measured = g.rest_height > 0.15f && g.rest_height < 0.8f;
-            if (!g.rest_measured) g.rest_height = kDefaultRest;
+            const float now = static_cast<float>(s.position[2] - mh / 4);
+            if (now > 0.1f && now < 0.9f) {
+                g.rest_height = g.rest_measured ? 0.98f * g.rest_height + 0.02f * now : now;
+                g.rest_measured = true;
+            }
         }
     }
     if (!g.sized) {
@@ -255,7 +259,7 @@ void on_step(GtModCtx *c) {
         if (e == Event::Takeover) {
             GtCarState s2 = s;
             if (fake_drop) s2.position[2] += g_fake.drop_height;
-            begin_simulation(c, s2, g_sup->reason(), fake_hit ? fake_vec : nullptr);
+            begin_simulation(c, s2, g_sup->reason(), fake_hit ? fake_vec : nullptr, dims);
         }
     } else if (g.wrote) {
         // the game's own step changed the velocity we wrote: a barrier hit (springs give ~0.25 m/s)
