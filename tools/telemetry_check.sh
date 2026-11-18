@@ -37,6 +37,7 @@ route_src="$host/config/pad_routes/rollover.pad"
 [ -f "$route_src" ] || { echo "telemetry_check: no pad route $route_src" >&2; exit 2; }
 py="$host/.venv/bin/python"
 mkdir -p "$out" || exit 2
+cd "$host" || exit 2  # gt_play reads extracted/ and recomp/ relative to the host checkout
 
 mbuild="$out/mod-build-s$sabotage"
 { cmake -S "$here" -B "$mbuild" -DCMAKE_CXX_COMPILER=clang++ -DGT_SDK_DIR="$host/include" "-DCMAKE_CXX_FLAGS=-DTELEMETRY_SABOTAGE=$sabotage" \
