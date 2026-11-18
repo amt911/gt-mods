@@ -8,3 +8,4 @@ draw-distance = "Pushes the race world's far clip plane further away so far scen
 orbit-camera = "Gran Turismo 7 style orbit camera on the right stick."
 reset-to-track = "One button puts the player's car back on the road, upright and facing the way it was going."
 rollover = "Lets the player's car roll over after a hard side impact, which the stock game cannot."
+telemetry = "A panel over the race: speed, G forces, throttle and brake bars and a 5-second graph."
