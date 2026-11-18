@@ -73,6 +73,7 @@ Nothing game-derived lives here: only hand-written mod code.
   in one physics step; `gain`, `cap`, `style = realistic|arcade` in `mod.toml`); the dormant flip state machine the flag would also wake
   (the car sinks through the road and pops back up) is kept asleep. A body box (`body_box`, on by default, 0.2.0) stops the tumbling car's roof and sides sinking into the road. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
   See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
+- `telemetry` - a panel over the race: speed, longitudinal / lateral G, throttle and brake bars and a 5-second graph, drawn with the mod draw API (needs mod API 8, host PR #667). Read-only; hidden = frames identical to no mod. Cheat device row *Telemetry panel* (Race) and hotkey `T`. Per-wheel slip waits for an SDK `car_wheels` call. See `telemetry/README.md`; check: `tools/telemetry_check.sh`.
 
 ## Build
 
