@@ -35,6 +35,11 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     read_setting(get, warn, "cap", 0.0f, 30.0f, &s.cap);
     read_setting(get, warn, "box_height", 0.5f, 3.0f, &s.box_height);
     read_setting(get, warn, "box_kick_cap", 0.1f, 20.0f, &s.box_kick_cap);
+    read_setting(get, warn, "mass", 300.0f, 5000.0f, &s.mass);
+    read_setting(get, warn, "restitution", 0.0f, 0.9f, &s.restitution);
+    read_setting(get, warn, "friction", 0.0f, 2.0f, &s.friction);
+    read_setting(get, warn, "hit_height", 0.0f, 1.0f, &s.hit_height);
+    read_setting(get, warn, "takeover_dv", 1.0f, 50.0f, &s.takeover_dv);
     if (const char *box = get("body_box")) {
         if (std::strcmp(box, "true") == 0) s.body_box = true;
         else if (std::strcmp(box, "false") == 0) s.body_box = false;
@@ -47,6 +52,7 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     }
 #if defined(ROLLOVER_SABOTAGE)
     s.sabotage = ROLLOVER_SABOTAGE;  // the in-game check's sabotage builds (it must fail with them)
+    if (s.sabotage == 13) s.restitution = 1.0f;  // the bounce check must fail
     if (s.sabotage == 11) { s.threshold = 3.0f; s.gain = 2.5f; s.cap = 12.0f; }  // the 0.3.0 numbers whatever mod.toml says
 #endif
     return s;

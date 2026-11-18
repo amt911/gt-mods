@@ -1,13 +1,44 @@
 # rollover
 
-Lets the player's car roll over in Gran Turismo PSP. The stock game cannot: it clamps the car's tilt angles to +-35 degrees and zeroes their
-rates. This mod lifts the clamp and, on a **hard side impact**, gives the car a roll. Disabled by default (`enabled = false`); it toggles
-live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that ended up on its roof back on the road).
+Lets the player's car roll over in Gran Turismo PSP, and bounce and slide like a body when it does. The stock game cannot roll: it clamps the car's tilt angles to +-35 degrees,
+zeroes their rates, and keeps applying its wheel and suspension model whatever the car's attitude. Disabled by default (`enabled = false`); it toggles live from the F9 menu. Pairs with
+`reset-to-track` (one button puts a car that ended up on its roof back on the road). Needs host API 7 (`api = 7`).
 
-## What it does
+## Two styles (`style` in `mod.toml`)
+
+- **`realistic` (default, 0.5.0).** A rigid-body simulation (`src/physics_core.*`, no game dependency, unit-tested) takes the player's car when it is hit hard, flipped, or
+  airborne and spinning, and hands it back once it is on its wheels again. While it drives the car it has mass, inertia, gravity, impulse contacts of the hull's corners and
+  edges with the road (restitution 0.15, Coulomb friction 0.7 on asphalt, 5/7 of it off the track), damping. A car dropped on its roof loses most of its vertical speed,
+  slides, and may roll over a corner; it does not hop or spin like a top. If it ends on its roof or side it stays there until reset-to-track.
+- **`arcade`.** The 0.4.0 scripted roll described below (a roll rate held after a hard side impact, with the old arcade numbers: threshold halved, gain x1.5), the body box, and no
+  simulation.
+
+## Realistic: what it does
+
+1. **Takeover** (`src/takeover.*`, pure). The simulation takes the car when, in one physics step, its velocity changes by more than `takeover_dv` (a barrier hit at ~90 km/h gives
+   8-15 m/s; normal driving 0.2), when its up vector drops under 0.5 (on its side), or when all four wheels are off the ground and it spins faster than 2 rad/s for 5 steps. It
+   starts from the game's state (position, basis as a quaternion, velocity, angular velocity from the basis change of the last step); after a hit it starts from the car
+   *before* the hit and applies the hit as an impulse `m * dv` at a contact point on the hull side (`hit_height` of the way up from the floor: barriers and kerbs strike the lower
+   body, which tips the car toward them).
+2. **Each physics step while it drives** (the world-step hook, before the game's step): one fixed step (1/60 s, 10 substeps) of the simulation, then the pose is written with
+   the named call `car_set_pose` (position, rows, the Euler angles derived from them, velocity; the rate fields zero) and the 35-degree clamp is lifted with `tilt_free`. The
+   game's step then runs on that pose; **before the car is drawn** the same pose is written again (the car-draw hook), so what is on screen is the simulation's pose and not the
+   game's suspension step on top of it. The game's own collision (a barrier) changes the velocity it finds; the next step reads that change and applies it as an impulse.
+3. **Ground.** A plane through the four wheel records' ground heights (`car_wheel_contacts`), the slope fitted while the car is level and kept while it tumbles.
+   The hull is a box from `car_dimensions` (0.78 x wheelbase long, track/2 + 0.17 wide, 0.59 x wheelbase tall, its floor at the height the origin has over the road when the car
+   sits level on its wheels).
+4. **Handback.** up.z above 0.85, at least 3 floor points on the road and |w| under 0.5 rad/s for 10 steps: the final pose is written with zero rates, the clamp is restored and
+   the game's suspension settles it. A position jump above 3 m (reset-to-track) ends the simulation.
+5. **Before the first hit nothing is written**: the car is the stock game's (the in-game check shows it).
+
+Limits: no barrier or wall geometry (the game keeps none that has been found: `docs/FACTS.md` "Collision code ... NOT FOUND"), so a wall only acts through the velocity change the
+game's own collision gives; the road is a plane under the four wheels, not a per-point height (`ground_height` is not offered: the game's road query is not frame-neutral from a
+tick, `docs/FINDINGS.md`); the hull proportions come from the Peugeot 206's model box and are a heuristic; player car only (AI cars are untouched).
+
+## Arcade: what it does (0.4.0)
 
 1. **The clamp.** `0x0893E0FC` limits the tilt angles (`K+0x6FC`, `K+0x700`) unless the word at `0x08CF2F08` is non-zero; `0x0894CCB8` reads
-   that word (its setter has no caller in the binary). The mod hooks that reader; nothing is written to the game, and when the mod is
+   that word (its setter has no caller in the binary). Since 0.5.0 the host hooks that reader on the mod's behalf (`tilt_free`, API 7); nothing is written to the game, and when the mod is
    switched off the host stops calling the hook, so the game reads its real word (0) again.
 2. **The flag is lifted only where the roll needs it.** The reader has six callers, all `jal`. The mod returns 1 only to the readers inside
    the body-motion step `0x08956DC8` that the roll needs (the tilt clamp and the Euler angle wrap) and the real word (0) to the others: the
@@ -55,7 +86,12 @@ live from the F9 menu. Pairs with `reset-to-track` (one button puts a car that e
 
 | key | default | meaning |
 | --- | --- | --- |
-| `style` | `"realistic"` | `realistic`: only severe impacts roll the car (a guard rail at ~90 km/h leans it, it does not flip it). `arcade`: the threshold is halved and the gain x1.5, so smaller hits roll it (with the 0.4.0 numbers an arcade barrier hit flips the car like 0.3.0 did) |
+| `style` | `"realistic"` | `realistic`: the rigid-body simulation. `arcade`: the 0.4.0 scripted roll (threshold halved and gain x1.5 against the numbers below, so a barrier hit flips the car like 0.3.0 did) |
+| `mass` | `1300.0` | realistic: the simulated car's mass (kg, 300 - 5000) |
+| `restitution` | `0.15` | realistic: bounce of the hull on the road (0 - 0.9; never below 1 m/s of approach) |
+| `friction` | `0.7` | realistic: Coulomb coefficient on asphalt (0 - 2) |
+| `hit_height` | `0.2` | realistic: where a barrier hit lands on the hull side, from the floor (0) to the roof (1) |
+| `takeover_dv` | `5.0` | realistic: velocity change in one step (m/s) that hands the car to the simulation (1 - 50) |
 | `threshold` | `6.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
 | `gain` | `0.9` | roll rate (rad/s) per m/s above the threshold (0 - 50) |
 | `cap` | `8.0` | largest roll rate (rad/s) the mod asks for (0 - 30) |
@@ -75,11 +111,11 @@ only past ~1 rad (its centre of mass over the wheel edge), so the flip needs ~5 
   that far in the runs, but this is not proven for every track.
 - Only the player gets impulses, and the player is found as exactly one human (driver vtable `0x08CC1F60`, with input live or `+0xA8` set in its replay). With two humans
   (ad hoc / split screen) nobody gets an impulse while the clamp stays lifted.
-- The roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
+- `arcade`: the roll is a held roll rate, not a physical simulation of the impact; the 40-step drive, the gain and the cap were tuned on one barrier hit.
 - `GT_MOD_ROLLOVER_FAKE=<step>:<dv>` adds `<dv>` m/s of lateral change in the tracker's view at that player-car step (used by `mods_together_check`; `m<step>:<dv>` counts from the car's first movement instead, as `--replay` does);
   `GT_MOD_ROLLOVER_LOG=1` logs the car's state (used by `tools/mod_rollover_check.sh`).
 
 ## Tests
 
-`ctest --test-dir build` runs `rollover_test` (settings, threshold, cap, style, signs, decay, teleport guards, the forward-axis weight). The in-game check lives in the
+`ctest --test-dir build` runs `rollover_test` (settings, threshold, cap, style, signs, decay, teleport guards, the forward-axis weight), `physics_core_test` (free fall, rest with no creep, a corner drop that tips over, a slide stopped by friction, a bounce within 0.8-1.1 x e^2 h, a spin that decays, tumbling about the intermediate axis gains no energy, the quaternion <-> basis round trip) and `takeover_test` (each trigger, the handback rule, reset detection, the angular velocity from a basis change, the hit point). The in-game check lives in the
 decomp repo: `tools/mod_rollover_check.sh` (see `docs/MODS.md` there).

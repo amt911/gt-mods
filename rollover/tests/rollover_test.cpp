@@ -25,6 +25,7 @@ static Settings base() {  // round numbers: threshold 3 m/s, 2 rad/s per m/s, ca
 static void settings_defaults_and_invalid() {
     std::vector<std::string> w;
     Settings d = parse({}, &w);
+    assert(d.mass == 1300.0f && d.restitution == 0.15f && d.friction == 0.7f && d.hit_height == 0.2f && d.takeover_dv == 5.0f);
     assert(w.empty() && d.style == Style::Realistic && d.threshold == 6.0f && d.gain == 0.9f && d.cap == 8.0f && d.sabotage == 0);
     Settings s = parse({{"style", "arcade"}, {"threshold", "1.5"}, {"gain", "4"}, {"cap", "12"}}, &w);
     assert(w.empty() && s.style == Style::Arcade && s.threshold == 1.5f && s.gain == 4.0f && s.cap == 12.0f);
@@ -36,6 +37,12 @@ static void settings_defaults_and_invalid() {
     assert(w.size() == 1 && s.threshold == 6.0f);
     s = parse({{"threshold", "nan"}}, &w);
     assert(w.size() == 2 && s.threshold == 6.0f);
+    w.clear();
+    s = parse({{"mass", "12"}, {"restitution", "1.5"}, {"friction", "-1"}, {"hit_height", "2"}, {"takeover_dv", "0"}}, &w);  // each outside its range: defaults kept
+    assert(w.size() == 5 && s.mass == 1300.0f && s.restitution == 0.15f && s.friction == 0.7f && s.hit_height == 0.2f && s.takeover_dv == 5.0f);
+    w.clear();
+    s = parse({{"mass", "900"}, {"restitution", "0.3"}, {"friction", "1.1"}, {"hit_height", "0.5"}, {"takeover_dv", "4"}}, &w);
+    assert(w.empty() && s.mass == 900.0f && s.restitution == 0.3f && s.friction == 1.1f && s.hit_height == 0.5f && s.takeover_dv == 4.0f);
 }
 
 static void body_box_settings() {
