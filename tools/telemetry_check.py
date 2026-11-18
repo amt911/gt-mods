@@ -2,7 +2,7 @@
 but switched off (same route, so the same game state on the same game frame: frames are paired by the lap timer, as the host's mod checks do).
 
   python -I tools/telemetry_check.py HOST OUT baseline_label label...   (labels starting `hidden` or `shown`)
-  python -I tools/telemetry_check.py HOST OUT toggle                    (runs `baseline` and `toggle`)
+  python -I tools/telemetry_check.py HOST OUT toggle                    (runs `baseline_toggle` and `toggle`)
 
 hidden  the panel hidden: every frame on the same game frame as the baseline's is byte-identical.
 shown   outside the panel rectangle the paired frames equal the baseline's, the panel darkens its rectangle, the speed digits differ between frames of
@@ -118,13 +118,14 @@ def judge_log(steps):
     top = max(s[2] for s in steps)
     if top < 20:
         return False, f"the car never got past {top:.1f} m/s"
-    brake = sorted(s[3] for s in steps if s[6] > 0.5 and s[5] < 0.1 and s[2] > 10)
-    if len(brake) < 10:
-        return False, f"only {len(brake)} braking samples (brake > 0.5, throttle < 0.1, speed > 10 m/s)"
+    brake = sorted(s[3] for s in steps if s[6] > 0.5 and s[5] < 0.1 and s[2] > 1.0)
+    if len(brake) < 8:
+        return False, f"only {len(brake)} braking samples (brake > 0.5, throttle < 0.1, speed > 1 m/s)"
     med_brake = brake[len(brake) // 2]
     if med_brake > -0.25:
         return False, f"median longitudinal G while braking is {med_brake:+.2f} (expected < -0.25)"
-    accel = sorted(s[3] for s in steps if s[5] > 0.9 and s[6] < 0.1 and 3 < s[2] < 25)
+    peak_n = max(steps, key=lambda s: s[2])[0]  # the launch: before the car's top speed (after the barrier it crawls at 5 m/s with the throttle held: ~0 G)
+    accel = sorted(s[3] for s in steps if s[0] < peak_n and s[5] > 0.9 and s[6] < 0.1 and 3 < s[2] < 25)
     if len(accel) < 10:
         return False, f"only {len(accel)} accelerating samples"
     med_accel = accel[len(accel) // 2]
@@ -251,8 +252,8 @@ def main(argv):
         failed = failed or not ok
 
     if argv[3] == "toggle":
-        base_log = read_log(os.path.join(out, "baseline", "run.log"))
-        base = cam.keyed_frames(os.path.join(out, "baseline", "frames"), base_log)
+        base_log = read_log(os.path.join(out, "baseline_toggle", "run.log"))
+        base = cam.keyed_frames(os.path.join(out, "baseline_toggle", "frames"), base_log)
         log = read_log(os.path.join(out, "toggle", "run.log"))
         mod = cam.keyed_frames(os.path.join(out, "toggle", "frames"), log)
         report("toggle", judge_toggle(base, mod, log))

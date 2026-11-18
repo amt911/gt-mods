@@ -14,7 +14,7 @@
 #   --others     baseline and shown runs with every other mod of the repo enabled too (the mods must coexist): the same shown judges
 #   Each of these must FAIL: --sabotage-g (-DTELEMETRY_SABOTAGE=1: a constant G), --sabotage-nodraw (=2: the overlay draws nothing), --sabotage-speed (=3: the speed digits
 #   frozen), --sabotage-bars (=4: the throttle and brake bars swapped).
-# Env: HOST (a gran-turismo-decomp checkout with the API 8 build in $HOST/build, default ../gt-drawapi), MOD_CHECK_NO_LOCK=1 (the caller holds the CPU lock),
+# Env: KEEP_BASELINE=1 (reuse the baseline run), HOST (a gran-turismo-decomp checkout with the API 8 build in $HOST/build, default ../gt-drawapi), MOD_CHECK_NO_LOCK=1 (the caller holds the CPU lock),
 # OUT (default <this repo>/check-out, gitignored; never commit it: it holds game frames). Exit: 0 pass, 1 check failed, 2 setup/run problem.
 # Each run is a real-time job inside the memory cgroup and its own hold of the shared CPU lock ($HOST/tools/cpu_lock.sh).
 set -u
@@ -88,15 +88,22 @@ run_one() {
 sfx=""; [ $others -eq 1 ] && sfx="_others"
 oth=""; [ $others -eq 1 ] && oth=others
 if [ $toggle -eq 1 ]; then
-  make_mods baseline false "" && make_mods toggle true "" || exit 2
-  run_one baseline 1 "$out/route_toggle.pad" && run_one toggle 1 "$out/route_toggle.pad" || exit 2
+  make_mods baseline_toggle false "" && make_mods toggle true "" || exit 2
+  run_one baseline_toggle 1 "$out/route_toggle.pad" && run_one toggle 1 "$out/route_toggle.pad" || exit 2
   "$py" -I "$here/tools/telemetry_check.py" "$host" "$out" toggle
   exit $?
 fi
 labels="hidden shown"; [ $sabotage -ne 0 ] && labels="shown"
 [ $others -eq 1 ] && labels="shown"
-make_mods "baseline$sfx" false "$oth" || exit 2
-run_one "baseline$sfx" 1 "$out/route_plain.pad" || exit 2
+# KEEP_BASELINE=1 reuses a baseline of $out made with the same --decomp, --every and --seconds (the sabotage runs share it: the mod is off in it)
+cfg="decomp=$decomp every=$every seconds=$seconds"
+if [ -n "${KEEP_BASELINE:-}" ] && [ -d "$out/baseline$sfx/frames" ] && [ "$(cat "$out/baseline$sfx/.config" 2>/dev/null)" = "$cfg" ]; then
+  echo "telemetry_check: reusing $out/baseline$sfx"
+else
+  make_mods "baseline$sfx" false "$oth" || exit 2
+  run_one "baseline$sfx" 1 "$out/route_plain.pad" || exit 2
+  echo "$cfg" > "$out/baseline$sfx/.config"
+fi
 for l in $labels; do
   v=1; [ "$l" = hidden ] && v=0
   make_mods "$l$sfx" true "$oth" || exit 2
