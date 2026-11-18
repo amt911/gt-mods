@@ -206,7 +206,7 @@ void on_step(GtModCtx *c) {
     if (!g_sup->simulating() && !g.rest_measured && s.basis[8] > 0.98f) {
         double mh = 0;
         int n = 0;
-        for (const GtWheelContact &w : wc) if (w.valid && w.load > 0) { mh += w.ground_height; ++n; }
+        for (const GtWheelContact &w : wc) if (w.valid) { mh += w.ground_height; ++n; }
         if (n == 4) {
             g.rest_height = static_cast<float>(s.position[2] - mh / 4);
             g.rest_measured = g.rest_height > 0.15f && g.rest_height < 0.8f;
@@ -307,11 +307,6 @@ void on_step(GtModCtx *c) {
     g_api->call_original(c);
 }
 
-void on_switch_off(GtModCtx *c) {  // a tick context: give the car back
-    if (g.car != 0 && g_sup != nullptr && g_sup->simulating()) g_api->tilt_free(g_self, c, g.car, 0);
-    reset_state();
-}
-
 }  // namespace
 
 int init(const GtModApi *api, GtMod *self, const rollover::Settings &settings, bool log) {
@@ -335,7 +330,9 @@ int init(const GtModApi *api, GtMod *self, const rollover::Settings &settings, b
         if (std::sscanf(drop[0] == 'm' ? drop + 1 : drop, "%ld:%f", &step, &h) == 2 && step >= 0 && std::isfinite(h)) { g_fake.drop_step = step; g_fake.drop_height = h; }
     }
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
-    return api->on_switch_off(self, on_switch_off);
+    // No switch-off function (it would need a vblank tick, which makes the host filter the pad): a mod switched off in the menu stops being called (its tilt_free is
+    // dropped by the host too) and, switched on again, finds the car far from the pose it wrote last: that is a reset, and the car goes back to the game.
+    return 0;
 }
 
 }  // namespace realistic

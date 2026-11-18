@@ -32,8 +32,7 @@ struct Game {
     float ground_h = 0.0f;
     std::vector<std::string> logs;
     GtHookFn step_hook = nullptr;
-    GtVblankFn off_fn = nullptr;
-    bool wheels_loaded = true;
+    bool wheels_loaded = true, no_car = false;
 } G;
 
 void set_euler_identity(GtCarState &s) {
@@ -45,10 +44,11 @@ int hook_point(GtMod *, GtHookPoint p, GtHookFn fn) {
     if (p == GT_HOOK_WORLD_STEP) G.step_hook = fn;
     return 0;
 }
-int on_switch_off(GtMod *, GtVblankFn fn) { G.off_fn = fn; return 0; }
 void call_original(GtModCtx *) {}
 std::uint32_t gpr(GtModCtx *, unsigned) { return 0x09000000u; }
-std::uint32_t race_cars(GtMod *, GtModCtx *, std::uint32_t, GtCar *out, std::uint32_t) { out[0] = GtCar{0x09300000u, 0, 1}; return 1; }
+std::uint32_t race_cars(GtMod *, GtModCtx *, std::uint32_t, GtCar *out, std::uint32_t) {
+    if (G.no_car) return 0;
+    out[0] = GtCar{0x09300000u, 0, 1}; return 1; }
 int car_state(GtMod *, GtModCtx *, std::uint32_t, GtCarState *out) { *out = G.s; return 0; }
 int car_dimensions(GtMod *, GtModCtx *, std::uint32_t, std::uint32_t, GtCarDimensions *out) { *out = GtCarDimensions{2.442f, 1.434f, 0.879f, -1.563f, 1.783f}; return 0; }
 int car_wheel_contacts(GtMod *, GtModCtx *, std::uint32_t, std::uint32_t, GtWheelContact out[4]) {
@@ -70,7 +70,6 @@ GtModApi make_api() {
     GtModApi a{};
     a.version = 7;
     a.hook_point = hook_point;
-    a.on_switch_off = on_switch_off;
     a.call_original = call_original;
     a.gpr = gpr;
     a.race_cars = race_cars;
@@ -100,7 +99,7 @@ int main() {
     GtModApi api = make_api();
     GtMod mod;
     rollover::Settings set;
-    CHECK(realistic::init(&api, &mod, set, true) == 0 && G.step_hook != nullptr && G.off_fn != nullptr);
+    CHECK(realistic::init(&api, &mod, set, true) == 0 && G.step_hook != nullptr);
     GtModCtx ctx{};
     G = Game{};
     // (G was reset: re-register through init once more with the same fake)
@@ -148,8 +147,47 @@ int main() {
     }
     std::printf("steps=%d handed=%d worst_lowest=%.3f pose_writes=%d min_up.z=%.2f max_w=%.2f\n", steps, handed ? 1 : 0, worst, G.pose_writes, min_upz, max_w);
     CHECK(worst > -0.05f);
-    // switched off in the menu: the car is given back
-    if (G.off_fn) { G.tilt_on = 1; G.off_fn(&ctx); }
+    // ---- a drop of 2 m (the check's GT_MOD_ROLLOVER_DROP): bounce within 1.2 e^2 h, slides to rest, handed back ----
+    {
+        setenv("GT_MOD_ROLLOVER_DROP", "m5:2.0", 1);
+        G.no_car = true;
+        G.step_hook(&ctx);  // no player car (the race ended): the mod forgets the first scenario
+        G = Game{};
+        CHECK(realistic::init(&api, &mod, set, true) == 0);
+        G.s.position[0] = 100; G.s.position[1] = 50; G.s.position[2] = 0.40f;
+        set_euler_identity(G.s);
+        G.s.velocity[0] = 4.0f;
+        G.s.speed = 4.0f;
+        bool handed2 = false;
+        int n = 0;
+        for (; n < 1200 && !handed2; ++n) {
+            G.step_hook(&ctx);
+            if (G.tilt_calls > 1 && G.tilt_on == 0) handed2 = true;
+            game_step();
+        }
+        std::vector<float> lowest;
+        for (const std::string &l : G.logs) {
+            const std::size_t at = l.find("lowest=");
+            if (l.find("SIM ") != std::string::npos && at != std::string::npos && l.find("n=") != std::string::npos) lowest.push_back(std::strtof(l.c_str() + at + 7, nullptr));
+        }
+        CHECK(!lowest.empty() && lowest.front() > 1.8f);
+        std::size_t hit = 0;
+        while (hit < lowest.size() && lowest[hit] > 0.02f) ++hit;
+        float apex = 0, prev = lowest.empty() ? 0 : lowest[hit < lowest.size() ? hit : 0];
+        bool rising = false;
+        for (std::size_t i = hit + 1; i < lowest.size(); ++i) {
+            if (lowest[i] > prev + 1e-4f) rising = true;
+            if (rising) {
+                if (lowest[i] < prev - 1e-4f) break;
+                apex = std::fmax(apex, lowest[i]);
+            }
+            prev = lowest[i];
+        }
+        const float e2h = 0.15f * 0.15f * lowest.front();
+        std::printf("drop: handed=%d steps=%d h0=%.2f first rebound apex=%.4f (1.2 e^2 h = %.4f)\n", handed2 ? 1 : 0, n, lowest.front(), apex, 1.2f * e2h);
+        CHECK(handed2);
+        CHECK(apex <= 1.2f * e2h && apex >= 0.5f * e2h);
+    }
     if (g_fail == 0) std::printf("realistic_test: all passed\n");
     return g_fail == 0 ? 0 : 1;
 }
