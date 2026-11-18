@@ -17,7 +17,7 @@ permissions:
 
 env:
   # Pinned: the mods build against this commit of the public decomp repo's include/gt_mod/ headers.
-  SDK_REF: ${{ inputs.sdk_ref || 'ef9bd4304ef45cdd04373047c39d144d67cf31af' }}
+  SDK_REF: ${{ inputs.sdk_ref || 'b3795f33bae0c2805cb497f47965b5b0d6399b90' }}
   PLATFORM: linux-x86_64
 
 jobs:
