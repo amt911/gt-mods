@@ -13,9 +13,10 @@ add damage to three parts, by where the hit landed on the body:
 
 Effects, applied to the human's car every physics step, live and in its replay:
 
-- **Engine / drive damage (engine + drive, capped at 1):** the throttle the step integrates is scaled by `1 - engine_loss * damage` (up to -40 %).
-  The pedal is written scaled before the step and put back after it: the game ramps it toward its target (1/15 per step) between steps, so a scaled pedal left in place
-  would compound (measured in the first probe: 0.62^n pinned it at 0.175).
+- **Engine / drive damage (engine + drive, capped at 1):** the engine's contribution is scaled by `1 - engine_loss * damage` (up to -40 %): the net speed gain per step is
+  that fraction of the undamaged one. The pedal itself cannot be used (measured: a scaled `+0x530` written before the step changes nothing, the drive chain derives its own
+  effective throttle), so before each step the speed loses `(1 - scale) x` the gain the engine gave in the last step, measured from where that step started (no compounding).
+  The top speed stays what the car's drag and gearing give; the cap below is what lowers it.
 - **Misaligned steering:** a yaw-rate bias, `yaw_bias` rad/s at full alignment damage.
 - **Severe damage** (engine + drive above `severe_start`): a top-speed cap from `cap_high` down to `cap_low` m/s.
 

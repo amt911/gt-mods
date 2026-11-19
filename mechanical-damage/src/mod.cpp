@@ -2,7 +2,7 @@
 //
 // The same impacts the deformation mod reads (`car_impact`, filtered by the same StepFilter) add damage to three parts by where the hit landed (damage_logic):
 // front -> engine and steering alignment, rear -> drive, sides -> alignment. Each world step the effects are applied to the human's car (live or in its replay):
-// the throttle the step integrates is scaled down and restored after the step, a small yaw-rate bias pulls the car to one side, and a badly damaged powertrain caps the speed. Damage lasts for the race.
+// the engine's gain per step is scaled down (bled before the step, like the cheats mod's nitro adds), a small yaw-rate bias pulls the car to one side, and a badly damaged powertrain caps the speed. Damage lasts for the race.
 #include "gt_mod/gt_mod_api.h"
 
 #include "damage_logic.hpp"
@@ -22,6 +22,8 @@ damage::State g_state;
 deform::StepFilter g_filter;
 float g_yaw_gain = 6.0f;  // how strongly the bias is applied per step (calibrated in the game: the yaw rate settles near the bias at full alignment damage)
 bool g_log = false;
+constexpr float kMaxGain = 0.5f;  // m/s per physics step: more than the engine can add (its own full-throttle gain is ~0.09 at the start, ~0.03 at speed)
+float g_last_gain = 0.0f;
 
 std::uint32_t g_car = 0;
 int g_role = 0;
@@ -55,6 +57,7 @@ void new_race(const char *why) {
     g_state = damage::State{};
     g_filter.reset();
     g_steps = 0;
+    g_last_gain = 0.0f;
     g_moved_at = -1;
     g_fake_done = false;
     g_repair_done = false;
@@ -111,19 +114,28 @@ void on_step(GtModCtx *ctx) {
         return;
     }
     const float pedal_before = before.throttle;
-    // Engine damage: the pedal the step integrates is scaled, and put back after it. The game ramps the pedal toward its target (1/15 per step) BETWEEN steps, from the
-    // value it finds, so a scaled pedal left in place would compound (measured: 0.62^n pinned it at 0.175).
+    // Engine damage. The pedal float cannot be used (measured: a scaled +0x530 written before the step changes nothing; the drive chain reads the effective throttle it derives itself),
+    // so the engine's contribution is bled the way the cheats mod's nitro adds to it: BEFORE the step the speed loses (1 - scale) x the gain the engine gave in the last step
+    // (measured from the step's own start, so it does not compound), and the step then adds its gain on top: the net gain is `scale` times the undamaged one.
     const float scale = damage::throttle_scale(g_state, g_params);
-    const float written = scale < 1.0f && pedal_before > 0.0f ? pedal_before * scale : pedal_before;
-    if (written != pedal_before) {
+    float written_speed = before.speed;
+    if (scale < 1.0f && pedal_before > 0.05f && g_last_gain > 0.0f && before.speed > 0.5f) {
+        const float bleed = (1.0f - scale) * g_last_gain;
+        const float k = (before.speed - bleed) / before.speed;
         GtCarState w = before;
-        w.throttle = written;
+        w.speed = before.speed - bleed;
+        for (float &v : w.velocity) v *= k;
         g_api->car_set_state(g_self, ctx, human.handle, &w);
+        written_speed = w.speed;
     }
     g_api->call_original(ctx);
     ++g_steps;
     GtCarState after;
     if (g_api->car_state(g_self, ctx, human.handle, &after) != 0) return;
+    {  // the engine's gain over the step, from where the step started
+        const float gain = after.speed - written_speed;
+        g_last_gain = pedal_before > 0.05f && gain > 0.0f && gain < kMaxGain ? gain : 0.0f;
+    }
     if (g_moved_at < 0 && pedal_before > 0.5f) g_moved_at = static_cast<long>(g_steps);
     if (g_repair_step >= 0 && !g_repair_done && g_moved_at >= 0 && static_cast<long>(g_steps) >= g_moved_at + g_repair_step) {
         g_repair_done = true;
@@ -160,10 +172,6 @@ void on_step(GtModCtx *ctx) {
     // the effects on the state the step produced
     GtCarState s = after;
     bool changed = false;
-    if (written != pedal_before) {
-        s.throttle = pedal_before;
-        changed = true;
-    }
     const float bias = damage::yaw_bias(g_state, g_params);
     if (bias != 0.0f) {
         s.rates[4] += bias * g_yaw_gain / 60.0f;
@@ -178,8 +186,8 @@ void on_step(GtModCtx *ctx) {
     }
     if (changed) g_api->car_set_state(g_self, ctx, human.handle, &s);
     if (g_log)
-        std::fprintf(stderr, "[mod:mechanical-damage] S st=%u mv=%ld vb=%llu v=%.3f thr=%.3f/%.3f yaw=%.4f pos=%.2f,%.2f,%.2f role=%d w=%.3f\n", g_steps, g_moved_at, static_cast<unsigned long long>(vblank), after.speed,
-                     pedal_before, after.throttle, after.rates[4], after.position[0], after.position[1], after.position[2], human.role, written);
+        std::fprintf(stderr, "[mod:mechanical-damage] S st=%u mv=%ld vb=%llu v=%.3f thr=%.3f/%.3f yaw=%.4f pos=%.2f,%.2f,%.2f role=%d bleed=%.4f\n", g_steps, g_moved_at, static_cast<unsigned long long>(vblank), after.speed,
+                     pedal_before, after.throttle, after.rates[4], after.position[0], after.position[1], after.position[2], human.role, written_speed - before.speed);
 }
 
 // Menu (any thread): atomics only.
