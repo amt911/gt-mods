@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 namespace realistic {
@@ -29,6 +30,7 @@ struct Fake {  // measurement aids for the in-game checks: GT_MOD_ROLLOVER_FAKE=
     float hit_dv = 0;
     long drop_step = -1;
     float drop_height = 0;
+    bool drop_keep = false;  // keep the car's speed in the drop (the slide check)
 } g_fake;
 
 struct State {
@@ -159,7 +161,7 @@ void write_pose(GtModCtx *c, std::uint32_t car, bool send) {
     g.wrote = true;
 }
 
-void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float fake_dv[3], const GtCarDimensions &dims) {
+void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float fake_dv[3], const GtCarDimensions &dims, bool plain = false) {
     size_hull(dims);  // the floor as measured while driving
     ++g.takeovers;
     g_api->tilt_free(g_self, c, g.car, 1);
@@ -168,7 +170,7 @@ void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float 
     const Quat q = quat_from_rows(s.basis);
     V3 v = v3(s.velocity);
     V3 dv;
-    if (why == Reason::Hit && g.have_prev) {  // the car before the hit, then the hit as an impulse at its contact point
+    if (why == Reason::Hit && g.have_prev && !plain) {  // the car before the hit, then the hit as an impulse at its contact point
         dv = v - v3(g.prev_vel);
         v = v3(g.prev_vel);
     }
@@ -259,8 +261,12 @@ void on_step(GtModCtx *c) {
         if (e == Event::Takeover) {
             GtCarState s2 = s;
             g.rest_height = rest_from_wheels(s, wc);  // before the fake drop moves the car: deterministic from the state at takeover (live and replay agree)
-            if (fake_drop) s2.position[2] += g_fake.drop_height;
-            begin_simulation(c, s2, g_sup->reason(), fake_hit ? fake_vec : nullptr, dims);
+            if (fake_drop) {
+                s2.position[2] += g_fake.drop_height;
+                if (!g_fake.drop_keep)
+                    for (int i = 0; i < 3; ++i) s2.velocity[i] = 0.0f;  // a pure drop: nothing sideways to disturb the bounce
+            }
+            begin_simulation(c, s2, g_sup->reason(), fake_hit ? fake_vec : nullptr, dims, fake_drop);
         }
     } else if (g.wrote) {
         // the game's own step changed the velocity we wrote: a barrier hit. Only the part ALONG the ground is taken: the part along the ground normal is the game's wheels and
@@ -338,7 +344,11 @@ int init(const GtModApi *api, GtMod *self, const rollover::Settings &settings, b
     if (const char *drop = std::getenv("GT_MOD_ROLLOVER_DROP")) {  // "m<steps>:<height>"
         float h = 0;
         long step = 0;
-        if (std::sscanf(drop[0] == 'm' ? drop + 1 : drop, "%ld:%f", &step, &h) == 2 && step >= 0 && std::isfinite(h)) { g_fake.drop_step = step; g_fake.drop_height = h; }
+        if (std::sscanf(drop[0] == 'm' ? drop + 1 : drop, "%ld:%f", &step, &h) == 2 && step >= 0 && std::isfinite(h)) {
+            g_fake.drop_step = step;
+            g_fake.drop_height = h;
+            g_fake.drop_keep = std::strstr(drop, ":keep") != nullptr;
+        }
     }
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     // No switch-off function (it would need a vblank tick, which makes the host filter the pad): a mod switched off in the menu stops being called (its tilt_free is
