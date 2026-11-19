@@ -31,6 +31,7 @@
 #include "gt_mod/gt_mod_api.h"
 
 #include "bodybox.hpp"
+#include "realistic.hpp"
 #include "rollover_logic.hpp"
 
 #include <algorithm>
@@ -45,7 +46,6 @@
 namespace {
 
 constexpr std::uint32_t kStep = 0x0894DD9C;       // a0 = world
-constexpr std::uint32_t kFlagReader = 0x0894CCB8;  // returns the word at 0x08CF2F08
 constexpr std::uint32_t kPlayerVtable = 0x08CC1F60;
 constexpr std::uint32_t kEntryReplay = 0xA8, kEntryInput = 0x6C;
 constexpr std::uint32_t kSlotSize = 0x2100, kCarInSlot = 0x2010;
@@ -54,18 +54,6 @@ constexpr std::uint32_t kPos = 0x10, kForward = 0x1C, kLateral = 0x28, kUp = 0x3
 // Measured (docs/FACTS.md, rollover): a positive +0x6F4 tips the up vector toward the +0x28 row (the lateral axis); +0x1C is the forward axis.
 constexpr float kRollSign = 1.0f;
 constexpr std::uint32_t kEulerPitchRate = 0x6E4, kBodyPitchRate = 0x6F0, kYawRate = 0x6F8;
-// The flag is lifted only for the readers in the body-motion step 0x08956DC8 (called once per car per physics step; a hook on the clamp
-// function 0x0893E0FC itself never fires in `--decomp off`, its caller is in the same recompiled unit). Two mechanisms, see kClampRa. Its readers are the tilt clamp (0x0893E0FC, the one that must see 1), the Euler angle
-// wrap (0x08956B20: keeps the angles in +-pi through a full roll) and 0x08945F6C, whose flag branch only does something when the flip
-// state byte's bit 2 is set (never, without the flip machine). Every reader outside it gets the game's real word (0): the contact-normal
-// reset 0x08956EF4, the step's ground clamp 0x0894E200 and above all the dormant flip state machine of 0x08956930 (it sinks the car
-// through the road). ROLLOVER_SABOTAGE=4 lifts the flag inside 0x08956930 too.
-constexpr std::uint32_t kBodyStep = 0x08956DC8, kFlipMachine = 0x08956930, kContactStep = 0x08945F6C;
-// `--decomp off`: the extent of a hook on 0x08956DC8 does not cover its callees (measured: no reader ever saw it set), but `ra` is the real
-// return address there: the clamp's and the wrap's call sites (+ 8), and for sabotage 4 the flip machine's. `--decomp on`: `ra` is a small
-// site number shared by several callers; the extent works there.
-constexpr std::uint32_t kClampRa = 0x0893E5AC, kWrapRa = 0x08956BF0, kFlipRa = 0x08956958;
-
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
 rollover::Settings g_settings;
@@ -81,11 +69,9 @@ unsigned g_pitch_clamps = 0;  // steps in which the pitch angle was held at the 
 long g_fake_pitch_step = -1;   // GT_MOD_ROLLOVER_FAKE_PITCH=m<steps>:<rate>: a nose-up pitch rate kick, see step_body
 float g_fake_pitch_rate = 0.0f;
 bool g_replay = false;  // the player car is in its replay (the race's state was reset when it started)
-std::uint32_t g_ras[32], g_ra_count = 0;
-bool g_in_body = false, g_in_flip = false, g_only_step = false;
+bool g_only_step = false;
 std::chrono::steady_clock::time_point g_last_step_wall;
 constexpr double kWallGapSeconds = 1.0;  // no player-car step for this long (switched off in F9, a pause): the tracker's last sample is stale
-unsigned g_body_hits = 0;
 float g_prev_vel[3] = {0, 0, 0};
 bool g_have_prev_vel = false;
 
@@ -124,52 +110,18 @@ void log_state(GtModCtx *c, std::uint32_t body, float held) {
     const GtModApi &a = *g_api;
     char line[520];
     std::snprintf(line, sizeof line,
-                  "st=%u imp=%u since=%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f fwd=%.2f,%.2f,%.2f lat=%.2f,%.2f,%.2f up=%.3f,%.3f,%.3f tilt=%.3f,%.3f rate=%.2f flag=%02X/%d held=%d(%.2f) body_calls=%u pclamp=%u prate=%.2f,%.2f yrate=%.2f",
+                  "st=%u imp=%u since=%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f fwd=%.2f,%.2f,%.2f lat=%.2f,%.2f,%.2f up=%.3f,%.3f,%.3f tilt=%.3f,%.3f rate=%.2f flag=%02X/%d held=%d(%.2f)  pclamp=%u prate=%.2f,%.2f yrate=%.2f",
                   g_car_steps, g_impulses, g_impulses == 0 ? -1 : static_cast<int>(g_since_impulse), a.readf(c, body + kPos), a.readf(c, body + kPos + 4),
                   a.readf(c, body + kPos + 8), a.readf(c, body + kVel), a.readf(c, body + kVel + 4), a.readf(c, body + kVel + 8), a.readf(c, body + kForward),
                   a.readf(c, body + kForward + 4), a.readf(c, body + kForward + 8), a.readf(c, body + kLateral), a.readf(c, body + kLateral + 4), a.readf(c, body + kLateral + 8), a.readf(c, body + kUp), a.readf(c, body + kUp + 4), a.readf(c, body + kUp + 8),
                   a.readf(c, body + kTiltA), a.readf(c, body + kTiltB), a.readf(c, body + kRollRate), a.read8(c, body + 0x74B),
-                  static_cast<int>(static_cast<std::int16_t>(a.read16(c, body + 0x74C))), g_tracker->steps_left(), held, g_body_hits, g_pitch_clamps, a.readf(c, body + kEulerPitchRate), a.readf(c, body + kBodyPitchRate), a.readf(c, body + kYawRate));
+                  static_cast<int>(static_cast<std::int16_t>(a.read16(c, body + 0x74C))), g_tracker->steps_left(), held, g_pitch_clamps, a.readf(c, body + kEulerPitchRate), a.readf(c, body + kBodyPitchRate), a.readf(c, body + kYawRate));
     a.log(g_self, line);
 }
 
-// Dynamic-extent markers (the host bypasses these hooks when the mod is switched off).
-void on_body_step(GtModCtx *c) {
-    ++g_body_hits;
-    g_in_body = true;
-    g_api->call_original(c);
-    g_in_body = false;
-}
-void on_contact_step(GtModCtx *c) {  // 0x08945F6C is inside the body step but must read the game's real word (its flag-1 path differs under --decomp on)
-    const bool was = g_in_body;
-    g_in_body = false;
-    g_api->call_original(c);
-    g_in_body = was;
-}
-void on_flip_machine(GtModCtx *c) {  // installed by the sabotage build only
-    g_in_flip = true;
-    g_api->call_original(c);
-    g_in_flip = false;
-}
-
-// The flag the game reads: 1 inside the clamp (and the wrap), the game's own word (0) everywhere else.
-void on_flag_read(GtModCtx *c) {
-    const std::uint32_t ra = g_api->gpr(c, 31);
-    g_api->call_original(c);
-    const bool lift = ra == kClampRa || ra == kWrapRa || g_in_body || (g_settings.sabotage == 4 && (ra == kFlipRa || g_in_flip));
-    if (g_log) {  // one line per distinct caller (ra, `--decomp off` only): which readers there are and which of them got 1
-        bool seen = false;
-        const std::uint32_t key = ra ^ ((lift ? 1u : 0u));  // the same caller seen lifted and not is logged twice
-        for (std::uint32_t i = 0; i < g_ra_count; ++i) seen = seen || g_ras[i] == key;
-        if (!seen && g_ra_count < 32) {
-            g_ras[g_ra_count++] = key;
-            char line[100];
-            std::snprintf(line, sizeof line, "FLAGREAD ra=%08X lifted=%d", ra, lift ? 1 : 0);
-            g_api->log(g_self, line);
-        }
-    }
-    if (lift) g_api->set_gpr(c, 2, 1);
-}
+// The tilt clamp is lifted through the host's `tilt_free` (API 7: the host hooks the flag reader for every api >= 7 mod, with the same extents and call-site
+// discriminators the 0.4.0 hooks here used, FACTS "Rollovers"); sabotage 1 and 5 never call it.
+bool lift_tilt() { return g_settings.sabotage != 1 && g_settings.sabotage != 5 && !g_only_step; }
 
 // ---- body box (0.2.0): the car's body against the ground while it tumbles --------------------------------------------------------------
 // The game has no body collision: a rolling car's roof sinks 0.5-1.3 m into the road (the wheels are its only contact). A box around the
@@ -323,6 +275,7 @@ void step_body(GtModCtx *c) {
     bool replay = false;
     const std::uint32_t car = find_player_car(c, a.gpr(c, 4), &replay);
     const std::uint32_t body = car != 0 ? a.read32(c, car + kBody) : 0;
+    if (car != 0 && body != 0 && lift_tilt()) a.tilt_free(g_self, c, body, 1);
     if (car == 0 || body == 0) {
         if (g_car != 0) g_tracker->reset();
         reset_box_state();
@@ -446,7 +399,7 @@ void on_step(GtModCtx *c) {
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi *api, GtMod *self) {
-    if (api == nullptr || api->version != GT_MOD_API_VERSION) return 1;
+    if (api == nullptr || api->version < GT_MOD_API_VERSION_7) return 1;  // 0.5.0 uses the v7 named calls (tilt_free, car_set_pose...)
     g_api = api;
     g_self = self;
     g_settings = rollover::parse_settings([&](const char *k) { return api->config(self, k); }, [&](const std::string &w) { api->log(self, w.c_str()); });
@@ -488,11 +441,6 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
         }
     }
     g_only_step = std::getenv("GT_MOD_ROLLOVER_ONLY_STEP") != nullptr;  // measurement aid (docs/FINDINGS.md): the step hook alone
-    if (g_settings.sabotage != 1 && g_settings.sabotage != 5 && !g_only_step) {  // 1: the impulse without the flag; 5: stock physics, log only
-        if (api->hook(self, kBodyStep, on_body_step) != 0 || api->hook(self, kContactStep, on_contact_step) != 0 ||
-            api->hook(self, kFlagReader, on_flag_read) != 0)
-            return 1;
-    }
-    if (g_settings.sabotage == 4 && api->hook(self, kFlipMachine, on_flip_machine) != 0) return 1;
-    return api->hook(self, kStep, on_step) != 0 ? 1 : 0;
+    if (g_settings.style == rollover::Style::Realistic) return realistic::init(api, self, g_settings, g_log);
+    return api->hook(self, kStep, on_step) != 0 ? 1 : 0;  // style = "arcade": the 0.4.0 scripted roll
 }
