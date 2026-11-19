@@ -28,6 +28,8 @@ int g_sabotage = 0;  // -DCAMS_SABOTAGE=1: the pose is never set (the offsets ar
 std::atomic<int> g_view{0};          // cams::View
 std::atomic<bool> g_heli{false};     // the replay helicopter camera
 constexpr float kStep = 1.0f / 60.0f;
+constexpr std::uint64_t kStaleVblanks = 300;  // the physics stops while the game is paused: the last pose stays in force this long, then the game's camera returns (menus, garage)
+std::uint64_t g_last_step_vblank = 0;
 
 struct Snapshot {
     bool valid = false;
@@ -75,6 +77,15 @@ void on_step(GtModCtx *ctx) {
     const bool have_dim = g_api->car_dimensions(g_self, ctx, world, human.handle, &dim) == 0;
     const std::uint64_t vb = g_api->vblank_index(g_self);
     std::lock_guard<std::mutex> lock(g_mutex);
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(st.position[i])) return;  // a NaN would poison the smoother for good
+    for (int i = 0; i < 9; ++i)
+        if (!std::isfinite(st.basis[i])) return;
+    if (g_last_step_vblank != 0 && vb > g_last_step_vblank + 120u) {  // the steps stopped for a while (a retry, a new race): start the points again
+        g_tv.reset();
+        g_heli_pos.reset();
+    }
+    g_last_step_vblank = vb;
     const cams::Vec3 previous = g_snap.car.position;
     g_snap.car = cams::car_from(st.position, st.basis);
     std::memcpy(g_snap.position, st.position, sizeof g_snap.position);
@@ -142,7 +153,7 @@ void on_camera(GtModCtx *ctx) {  // GT_HOOK_CAMERA: never call_original here (th
         snap = g_snap;
     }
     const std::uint64_t now = g_api->vblank_index(g_self);
-    if (!snap.valid || now > snap.vblank + 10u) return;  // no race running: the game's own camera
+    if (!snap.valid || now > snap.vblank + kStaleVblanks) return;  // no race running (a pause shorter than ~5 s keeps the view): the game's own camera
     const bool replay = g_api->replay_active(g_self, ctx) != 0;
     const cams::View view = static_cast<cams::View>(g_view.load());
     const char *name;
