@@ -59,6 +59,11 @@ int main() {
     Params off = p;
     off.scale = 0.0f;
     assert(throttle_scale(m, off) == 1.0f && yaw_bias(m, off) == 0.0f && !speed_cap(m, off, &cap));
+    Params wild = p;  // effect_scale above 1 or an engine_loss above 1 never turns the engine into a brake
+    wild.scale = 5.0f;
+    assert(near(throttle_scale(m, wild), 0.6f) && throttle_scale(clean, wild) == 1.0f);  // the scale is clamped to 0..1
+    wild.engine_loss = 5.0f;
+    assert(throttle_scale(m, wild) == 0.0f);
     assert(percent(0.426f) == 43 && percent(-0.5f) == 50 && percent(2.0f) == 100);
     repair(m);
     assert(m.engine == 0.0f && m.drive == 0.0f && m.align == 0.0f);

@@ -27,7 +27,7 @@ void add_hit(State &s, const float contact[3], float strength) {
 
 float powertrain(const State &s) { return clamp(s.engine + s.drive, 0.0f, 1.0f); }
 
-float throttle_scale(const State &s, const Params &p) { return 1.0f - p.scale * p.engine_loss * powertrain(s); }
+float throttle_scale(const State &s, const Params &p) { return clamp(1.0f - clamp(p.scale, 0.0f, 1.0f) * p.engine_loss * powertrain(s), 0.0f, 1.0f); }
 
 float yaw_bias(const State &s, const Params &p) { return p.scale * p.yaw_bias * s.align; }
 

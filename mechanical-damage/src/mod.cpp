@@ -9,6 +9,7 @@
 #include "deform_logic.hpp"
 
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +26,10 @@ bool g_log = false;
 constexpr float kMaxGain = 0.5f;  // m/s per physics step: more than the engine can add (its own full-throttle gain is ~0.09 at the start, ~0.03 at speed)
 float g_last_gain = 0.0f, g_prev_written_speed = 0.0f, g_prev_pedal = 0.0f;
 bool g_have_prev = false;
+bool g_gap_pending = false;  // the steps stopped for a while: a pause, or a retry (told apart by the position)
+float g_last_position[3] = {0, 0, 0};
+constexpr float kRestartJump = 15.0f;  // m: a car further than this from where it was before the gap was put back (retry, reset)
+constexpr float kCapSlew = 0.5f;       // m/s per step: the cap is approached, never imposed at once (a one-step jump in speed reads as a hit)
 
 std::uint32_t g_car = 0;
 int g_role = 0;
@@ -51,6 +56,11 @@ void publish() {
     g_pct_engine.store(damage::percent(g_state.engine));
     g_pct_drive.store(damage::percent(g_state.drive));
     g_pct_align.store(damage::percent(g_state.align));
+}
+
+bool position_jumped(const float now[3]) {
+    const float dx = now[0] - g_last_position[0], dy = now[1] - g_last_position[1], dz = now[2] - g_last_position[2];
+    return std::sqrt(dx * dx + dy * dy + dz * dz) > kRestartJump;
 }
 
 void new_race(const char *why) {
@@ -99,7 +109,9 @@ void on_step(GtModCtx *ctx) {
         return;
     }
     const std::uint64_t vblank = g_api->vblank_index(g_self);
-    if (human.handle != g_car || human.role != g_role || (g_last_vblank != 0 && vblank > g_last_vblank + 120u)) {
+    // A new race, or its replay starting. A gap in the steps alone is only a pause (damage lasts for the race): the next step decides, by a position jump (a retry puts the car back at the start).
+    if (g_last_vblank != 0 && vblank > g_last_vblank + 120u) g_gap_pending = true;
+    if (human.handle != g_car || human.role != g_role) {
         new_race(human.role == 3 ? "replay" : "live");
         g_car = human.handle;
         g_role = human.role;
@@ -142,6 +154,11 @@ void on_step(GtModCtx *ctx) {
     ++g_steps;
     GtCarState after;
     if (g_api->car_state(g_self, ctx, human.handle, &after) != 0) return;
+    if (g_gap_pending) {
+        g_gap_pending = false;
+        if (position_jumped(after.position)) new_race("restart");
+    }
+    std::memcpy(g_last_position, after.position, sizeof g_last_position);
     if (g_moved_at < 0 && pedal_before > 0.5f) g_moved_at = static_cast<long>(g_steps);
     if (g_repair_step >= 0 && !g_repair_done && g_moved_at >= 0 && static_cast<long>(g_steps) >= g_moved_at + g_repair_step) {
         g_repair_done = true;
@@ -180,13 +197,14 @@ void on_step(GtModCtx *ctx) {
     bool changed = false;
     const float bias = damage::yaw_bias(g_state, g_params);
     if (bias != 0.0f) {
-        s.rates[4] += bias * g_yaw_gain / 60.0f;
+        s.rates[4] -= bias * g_yaw_gain / 60.0f;  // measured: a positive yaw rate turns the car to ITS LEFT (forward = (-sin yaw, cos yaw), right = +y at yaw 1.571), and align > 0 is a hit from the right: the pull is toward the side that was hit
         changed = true;
     }
     float cap = 0.0f;
     if (damage::speed_cap(g_state, g_params, &cap) && s.speed > cap) {
-        const float k = cap / s.speed;
-        s.speed = cap;
+        const float limited = std::max(cap, s.speed - kCapSlew);  // approached over several steps: the impact tracker would read one big step as a hit on the front
+        const float k = limited / s.speed;
+        s.speed = limited;
         for (float &v : s.velocity) v *= k;
         changed = true;
     }
