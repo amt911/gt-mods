@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <initializer_list>
 #include <cstdlib>
 
@@ -142,7 +143,10 @@ static void test_spin_decays_and_no_gyro_blowup() {
     p.gravity = 0;
     for (int i = 0; i < 60 * 10; ++i) step(h, p, g, b, kDt);
     NEAR(len(b.w), 10.0 * std::exp(-0.12 * 10), 0.3);
-    // tumbling about the intermediate axis does not gain energy
+    // tumbling about the intermediate axis does not gain energy: with the damping OFF (it would hide a gain) the energy stays within 0.1 %
+    Params nd = p;
+    nd.ang_damping = 0;
+    nd.lin_damping = 0;
     Body t = make_body(h, {0, 0, 2000}, Quat{}, {}, {0.5, 6.0, 0.4});
     const V3 I = inertia_diag(h, p.mass);
     auto energy = [&](const Body &x) {
@@ -151,8 +155,8 @@ static void test_spin_decays_and_no_gyro_blowup() {
     };
     const double e0 = energy(t);
     for (int i = 0; i < 60 * 10; ++i) {
-        step(h, p, g, t, kDt);
-        CHECK(energy(t) <= e0 * 1.02);
+        step(h, nd, g, t, kDt);
+        CHECK(energy(t) <= e0 * 1.001);
     }
 }
 
@@ -205,6 +209,83 @@ static void test_no_pop_on_a_slope() {
     CHECK(len(b.v) < 0.05);  // friction holds it on a gentle slope
 }
 
+
+// A box rolled onto a long edge with its centre of mass 2 cm past the apex: three collinear contacts (two corners and a midpoint) hold it only on paper. It must topple flat,
+// not be put to sleep balanced on the edge.
+static void test_edge_balance_does_not_sleep() {
+    for (int side = -1; side <= 1; side += 2) {
+        Hull h;
+        Params p;
+        PlaneGround g;
+        const double hh = 0.5 * (h.zt - h.zb);
+        const double apex = std::atan2(h.hw, hh);
+        Quat q = axis_angle({1, 0, 0}, apex + side * 0.02 / std::sqrt(h.hw * h.hw + hh * hh));
+        Body b = make_body(h, {0, 0, 5.0}, q);
+        // lower it until its lowest hull point touches
+        b.com.z -= lowest_point(h, b, g);
+        StepInfo si;
+        for (int i = 0; i < 60 * 12; ++i) si = step(h, p, g, b, kDt);
+        const V3 axes[3] = {rotate(b.q, {1, 0, 0}), rotate(b.q, {0, 1, 0}), rotate(b.q, {0, 0, 1})};
+        double best = 0;
+        for (const V3 &a : axes) best = std::max(best, std::fabs(a.z));
+        CHECK(best > std::cos(3 * M_PI / 180));  // flat on a face, not balanced on an edge
+        CHECK(si.asleep);
+    }
+}
+
+// Friction is a disc, not a square: the same box sliding at the same speed along an axis and along the diagonal stops in the same distance.
+static void test_friction_is_isotropic() {
+    Hull h;
+    Params p;
+    p.lin_damping = 0;
+    p.ang_damping = 0;
+    PlaneGround g;
+    g.mu = 0.7;
+    auto slide = [&](V3 v) {
+        Body b = make_body(h, {0, 0, 0.001}, Quat{}, v);
+        const V3 x0 = b.com;
+        for (int i = 0; i < 60 * 6; ++i) step(h, p, g, b, kDt);
+        return len(b.com - x0);
+    };
+    const double along = slide({10, 0, 0}), diagonal = slide({10 / std::sqrt(2.0), 10 / std::sqrt(2.0), 0});
+    std::printf("slide along %.3f diagonal %.3f\n", along, diagonal);
+    NEAR(diagonal, along, 0.03 * along);
+}
+
+static void test_deterministic() {
+    Hull h;
+    Params p;
+    PlaneGround g;
+    g.gx = 0.02;
+    auto run = [&]() {
+        Body b = make_body(h, {0, 0, 1.5}, normalized({0.9, 0.3, 0.2, 0.1}), {5, -2, 0}, {1, 2, 3});
+        for (int i = 0; i < 600; ++i) step(h, p, g, b, kDt);
+        return b;
+    };
+    const Body a = run(), b = run();
+    CHECK(std::memcmp(&a.com, &b.com, sizeof a.com) == 0 && std::memcmp(&a.q, &b.q, sizeof a.q) == 0 && std::memcmp(&a.v, &b.v, sizeof a.v) == 0 &&
+          std::memcmp(&a.w, &b.w, sizeof a.w) == 0 && a.rest_steps == b.rest_steps);  // bit-identical (fields: the struct has padding)
+}
+
+// The quaternion <-> rows conversion near the pole of the game's Euler angles (pitch 89.9 - 90 degrees): the rows rebuilt from the quaternion stay a rotation and match.
+static void test_rows_near_gimbal() {
+    for (double pitch = 89.9; pitch <= 90.0001; pitch += 0.01)
+        for (double yaw = -3.0; yaw <= 3.0; yaw += 0.7)
+            for (double roll = -3.0; roll <= 3.0; roll += 0.9) {
+                const double pr = pitch * M_PI / 180, s1 = std::sin(pr), c1 = std::cos(pr), s2 = std::sin(roll), c2 = std::cos(roll), s3 = std::sin(yaw), c3 = std::cos(yaw);
+                const float rows[9] = {float(-s3 * c1), float(c3 * c1), float(s1), float(c3 * c2 - s1 * s2 * s3), float(s3 * c2 + s1 * s2 * c3), float(-c1 * s2),
+                                       float(c3 * s2 + s1 * c2 * s3), float(s3 * s2 - s1 * c2 * c3), float(c1 * c2)};
+                const Quat q = quat_from_rows(rows);
+                CHECK(std::fabs(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z - 1.0) < 1e-9);
+                float back[9];
+                rows_from_quat(q, back);
+                for (int k = 0; k < 9; ++k) NEAR(rows[k], back[k], 2e-6);
+                float again[9];
+                rows_from_quat(quat_from_rows(back), again);
+                for (int k = 0; k < 9; ++k) NEAR(back[k], again[k], 2e-6);
+            }
+}
+
 int main() {
     test_free_fall();
     test_flat_drop_rests();
@@ -216,6 +297,10 @@ int main() {
     test_rows_roundtrip();
     test_origin_roundtrip();
     test_no_pop_on_a_slope();
+    test_edge_balance_does_not_sleep();
+    test_friction_is_isotropic();
+    test_deterministic();
+    test_rows_near_gimbal();
     if (g_fail == 0) std::printf("physics_core_test: all passed\n");
     return g_fail == 0 ? 0 : 1;
 }

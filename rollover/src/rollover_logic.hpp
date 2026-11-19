@@ -29,6 +29,7 @@ struct Settings {
     float friction = 0.7f;         // Coulomb coefficient on asphalt (off-track surfaces get 5/7 of it)
     float hit_height = 0.2f;       // where a barrier hit lands on the hull, as a fraction of its height above the floor (barriers and kerbs strike the lower body)
     float takeover_dv = 5.0f;      // m/s of velocity change in one step that hands the car to the simulation
+    float sim_hit_dv = 1.5f;       // m/s: while simulating, the game's step changing the velocity along the ground by more than this is a barrier hit (an impulse)
     int sabotage = 0;        // check builds only: 1 = no flag (impulse only), 2 = flag only (no impulse), 3 = threshold 0 (impulse in normal driving), 4 = the flag also lifted for the flip state machine, 5 = stock physics (log only: no flag, no impulse written), 6 = the body box off (log still measures), 7 = the box pushes an upright car (ground 0.6 m too high, floor corners always on), 8 = box_kick_cap 20 (no effective cap), 9 = the roll drive also with the forward axis vertical (spinning top), 10 = live only (the mod skips the replay), 13 = restitution 1.0, 14 = no friction, 15 = the simulated pose is never sent to the game, 16 = takeover disabled, 12 = no pitch limit (the nose may go past 35 degrees to vertical: the spinning top), 11 = the 0.3.0 defaults (threshold 3, gain 2.5, cap 12: any barrier hit flips the car)
 };
 

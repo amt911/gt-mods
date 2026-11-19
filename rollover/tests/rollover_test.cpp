@@ -25,7 +25,7 @@ static Settings base() {  // round numbers: threshold 3 m/s, 2 rad/s per m/s, ca
 static void settings_defaults_and_invalid() {
     std::vector<std::string> w;
     Settings d = parse({}, &w);
-    assert(d.mass == 1300.0f && d.restitution == 0.15f && d.friction == 0.7f && d.hit_height == 0.2f && d.takeover_dv == 5.0f);
+    assert(d.mass == 1300.0f && d.restitution == 0.15f && d.friction == 0.7f && d.hit_height == 0.2f && d.takeover_dv == 5.0f && d.sim_hit_dv == 1.5f);
     assert(w.empty() && d.style == Style::Realistic && d.threshold == 6.0f && d.gain == 0.9f && d.cap == 8.0f && d.sabotage == 0);
     Settings s = parse({{"style", "arcade"}, {"threshold", "1.5"}, {"gain", "4"}, {"cap", "12"}}, &w);
     assert(w.empty() && s.style == Style::Arcade && s.threshold == 1.5f && s.gain == 4.0f && s.cap == 12.0f);

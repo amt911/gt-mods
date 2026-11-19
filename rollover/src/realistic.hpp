@@ -7,7 +7,7 @@
 
 namespace realistic {
 
-// Registers the world-step and car-draw hooks (gt_mod_init only). 0 = ok.
+// Registers the world-step hook (gt_mod_init only). 0 = ok. (A pose write at the car-draw hook changes nothing on screen: host FACTS "Rollover physics research".)
 int init(const GtModApi *api, GtMod *self, const rollover::Settings &settings, bool log);
 
 }  // namespace realistic

@@ -40,6 +40,7 @@ Settings parse_settings(const std::function<const char *(const char *)> &get, co
     read_setting(get, warn, "friction", 0.0f, 2.0f, &s.friction);
     read_setting(get, warn, "hit_height", 0.0f, 1.0f, &s.hit_height);
     read_setting(get, warn, "takeover_dv", 1.0f, 50.0f, &s.takeover_dv);
+    read_setting(get, warn, "sim_hit_dv", 0.2f, 20.0f, &s.sim_hit_dv);
     if (const char *box = get("body_box")) {
         if (std::strcmp(box, "true") == 0) s.body_box = true;
         else if (std::strcmp(box, "false") == 0) s.body_box = false;

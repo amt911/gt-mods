@@ -16,7 +16,8 @@ struct TakeoverParams {
     double handback_w = 0.5;        // |w| below this (rad/s)
     int handback_steps = 10;        // for this many steps
     double reset_jump = 3.0;        // m: a car that moved this far from where the simulation left it was moved by something else (reset-to-track, a respawn)
-    double sim_hit_dv = 1.5;        // m/s: while simulating, the game's own step changing the velocity by more than this is a barrier hit (springs give ~0.25)
+    double sim_hit_dv = 1.5;        // m/s: while simulating, the game's own step changing the velocity ALONG THE GROUND by more than this is a barrier hit
+    double reset_rows = 0.3;        // the up row differing this much from the written one is a reset
 };
 
 enum class Event { None, Takeover, Handback, Reset };
@@ -36,6 +37,7 @@ struct SimObs {
     double up_z = 1;
     double w = 0;
     int bottom_contacts = 0;
+    double rows_jump = 0;  // largest difference between the game's up row and the one written last: a car turned by something else (reset-to-track) is not ours any more
     double jump = 0;  // distance between the pose the simulation wrote last and the one the game reports now
 };
 

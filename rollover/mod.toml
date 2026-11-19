@@ -19,6 +19,8 @@ friction = 0.7
 hit_height = 0.2
 # realistic: velocity change in ONE physics step (m/s) that hands the car to the simulation
 takeover_dv = 5.0
+# realistic: while the simulation drives, a velocity change along the ground above this (m/s) in one step is a barrier hit and becomes an impulse
+sim_hit_dv = 1.5
 # arcade: lateral velocity change of the car in ONE physics step (m/s) above which a hit tips the car
 threshold = 6.0
 # roll rate (rad/s) per m/s of lateral velocity change above the threshold

@@ -124,6 +124,34 @@ double eff_mass_inv(const V3 &I, const Quat &q, double invm, V3 r, V3 d) {
     return invm + dot(cross(a, r), d);
 }
 
+// A body may be put to rest only when its centre of mass is held: the contact points, seen from above, span a polygon with area (not collinear) and the centre of
+// mass projects inside it. A box balanced on an edge has collinear contacts and falls.
+bool supported(const Contact *cs, int n) {
+    if (n < 3) return false;
+    struct P { double x, y; };
+    P pts[kHullPoints];
+    for (int i = 0; i < n; ++i) pts[i] = {cs[i].r.x, cs[i].r.y};  // relative to the centre of mass: the origin is the projection of the centre of mass
+    // convex hull (monotone chain)
+    for (int i = 1; i < n; ++i)
+        for (int j = i; j > 0 && (pts[j].x < pts[j - 1].x || (pts[j].x == pts[j - 1].x && pts[j].y < pts[j - 1].y)); --j) std::swap(pts[j], pts[j - 1]);
+    P hull[2 * kHullPoints];
+    int k = 0;
+    auto cr = [](P o, P a, P b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+    for (int i = 0; i < n; ++i) {
+        while (k >= 2 && cr(hull[k - 2], hull[k - 1], pts[i]) <= 1e-9) --k;
+        hull[k++] = pts[i];
+    }
+    for (int i = n - 2, t = k + 1; i >= 0; --i) {
+        while (k >= t && cr(hull[k - 2], hull[k - 1], pts[i]) <= 1e-9) --k;
+        hull[k++] = pts[i];
+    }
+    --k;
+    if (k < 3) return false;  // collinear
+    for (int i = 0; i < k; ++i)
+        if (cr(hull[i], hull[(i + 1) % k], P{0, 0}) < 0) return false;  // the centre of mass is outside this edge
+    return true;
+}
+
 }  // namespace
 
 void apply_impulse(const Hull &h, const Params &p, Body &b, V3 point, V3 J) {
@@ -150,7 +178,11 @@ StepInfo step(const Hull &h, const Params &p, const Ground &g, Body &b, double d
             const V3 Iw{I.x * wb.x, I.y * wb.y, I.z * wb.z};
             const V3 tq = -cross(wb, Iw);
             const V3 dwb{tq.x / I.x * dt, tq.y / I.y * dt, tq.z / I.z * dt};
-            b.w = rotate(b.q, wb + dwb);
+            // the explicit step adds energy; the torque-free motion keeps it, so the new rate is scaled back to the old kinetic energy
+            const V3 wn = wb + dwb;
+            const double e_old = I.x * wb.x * wb.x + I.y * wb.y * wb.y + I.z * wb.z * wb.z;
+            const double e_new = I.x * wn.x * wn.x + I.y * wn.y * wn.y + I.z * wn.z * wn.z;
+            b.w = rotate(b.q, e_new > 1e-18 ? wn * std::sqrt(e_old / e_new) : wn);
         }
         b.v = b.v * std::max(0.0, 1.0 - p.lin_damping * dt);
         b.w = b.w * std::max(0.0, 1.0 - p.ang_damping * dt);
@@ -189,25 +221,32 @@ StepInfo step(const Hull &h, const Params &p, const Ground &g, Body &b, double d
         for (int it = 0; it < p.iterations; ++it) {
             for (int i = 0; i < nc; ++i) {
                 Contact &c = cs[i];
+                // friction: the two tangent impulses are solved together and the accumulated pair is clamped to the disc |l| <= mu * normal impulse
+                // (a clamp per axis would be a square: sqrt(2) times the friction on the diagonal)
                 const V3 dirs[2] = {c.t1, c.t2};
-                double *acc[2] = {&c.l1, &c.l2};
-                for (int k = 0; k < 2; ++k) {  // friction first, clamped by the normal impulse so far
-                    const double vt = dot(b.v + cross(b.w, c.r), dirs[k]);
-                    const double kt = eff_mass_inv(I, b.q, invm, c.r, dirs[k]);
-                    double dl = -vt / kt;
-                    const double lim = c.mu * c.ln;
-                    const double nl = std::clamp(*acc[k] + dl, -lim, lim);
-                    dl = nl - *acc[k];
-                    *acc[k] = nl;
-                    apply_impulse(h, p, b, b.com + c.r, dirs[k] * dl);
+                double dl[2], vt[2];
+                const double kt = 0.5 * (eff_mass_inv(I, b.q, invm, c.r, dirs[0]) + eff_mass_inv(I, b.q, invm, c.r, dirs[1]));  // one mass for both axes: the pair points against the slip
+                for (int k = 0; k < 2; ++k) {
+                    vt[k] = dot(b.v + cross(b.w, c.r), dirs[k]);
+                    dl[k] = -vt[k] / kt;
                 }
+                double n1 = c.l1 + dl[0], n2 = c.l2 + dl[1];
+                const double lim = c.mu * c.ln, mag = std::hypot(n1, n2);
+                if (mag > lim) {
+                    const double f = mag > 0 ? lim / mag : 0.0;
+                    n1 *= f;
+                    n2 *= f;
+                }
+                apply_impulse(h, p, b, b.com + c.r, dirs[0] * (n1 - c.l1) + dirs[1] * (n2 - c.l2));
+                c.l1 = n1;
+                c.l2 = n2;
                 const double vn = dot(b.v + cross(b.w, c.r), c.n);
                 const double kn = eff_mass_inv(I, b.q, invm, c.r, c.n);
-                double dl = (c.bounce - vn) / kn;
-                const double nl = std::max(0.0, c.ln + dl);
-                dl = nl - c.ln;
+                double dn = (c.bounce - vn) / kn;
+                const double nl = std::max(0.0, c.ln + dn);
+                dn = nl - c.ln;
                 c.ln = nl;
-                apply_impulse(h, p, b, b.com + c.r, c.n * dl);
+                apply_impulse(h, p, b, b.com + c.r, c.n * dn);
             }
         }
         // position correction: a separate pseudo-velocity solve, so it adds nothing to the real velocity (no energy gain)
@@ -228,7 +267,7 @@ StepInfo step(const Hull &h, const Params &p, const Ground &g, Body &b, double d
         b.com = b.com + vp * dt;
         b.q = integrate(b.q, wp, dt);
         // rest: a body held by >= 3 contacts and moving less than the threshold stops
-        if (nc >= 3 && len(b.v) < p.sleep_speed && len(b.w) < p.sleep_speed) {
+        if (supported(cs, nc) && len(b.v) < p.sleep_speed && len(b.w) < p.sleep_speed) {
             b.v = V3{};
             b.w = V3{};
             ++b.rest_steps;

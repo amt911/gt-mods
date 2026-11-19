@@ -101,6 +101,13 @@ static void test_reset() {
     o.jump = 130.0;  // reset-to-track put the car 130 m back
     CHECK(s.update_sim(o) == Event::Reset && !s.simulating());
     CHECK(s.update_sim(o) == Event::None);  // nothing more once the game has the car again
+    // the game turned the car (reset-to-track at the same spot): the up row is no longer the written one
+    s.force_takeover(Reason::Hit);
+    o.jump = 0.5;
+    o.rows_jump = 0.05;  // the game's own step moves the pose a little
+    CHECK(s.update_sim(o) == Event::None);
+    o.rows_jump = 1.2;
+    CHECK(s.update_sim(o) == Event::Reset && !s.simulating());
 }
 
 static void test_angular_velocity() {

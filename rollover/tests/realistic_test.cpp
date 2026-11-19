@@ -33,6 +33,8 @@ struct Game {
     std::vector<std::string> logs;
     GtHookFn step_hook = nullptr;
     bool wheels_loaded = true, no_car = false;
+    float extra_dv_up = 0.0f;  // what grounded wheel records make the game's step add along the ground normal
+    int role = 1;
 } G;
 
 void set_euler_identity(GtCarState &s) {
@@ -48,7 +50,7 @@ void call_original(GtModCtx *) {}
 std::uint32_t gpr(GtModCtx *, unsigned) { return 0x09000000u; }
 std::uint32_t race_cars(GtMod *, GtModCtx *, std::uint32_t, GtCar *out, std::uint32_t) {
     if (G.no_car) return 0;
-    out[0] = GtCar{0x09300000u, 0, 1}; return 1; }
+    out[0] = GtCar{0x09300000u, 0, G.role}; return 1; }
 int car_state(GtMod *, GtModCtx *, std::uint32_t, GtCarState *out) { *out = G.s; return 0; }
 int car_dimensions(GtMod *, GtModCtx *, std::uint32_t, std::uint32_t, GtCarDimensions *out) { *out = GtCarDimensions{2.442f, 1.434f, 0.879f, -1.563f, 1.783f}; return 0; }
 int car_wheel_contacts(GtMod *, GtModCtx *, std::uint32_t, std::uint32_t, GtWheelContact out[4]) {
@@ -87,6 +89,7 @@ void game_step() {
     const float dt = 1.0f / 60.0f;
     for (int i = 0; i < 3; ++i) G.s.position[i] += G.s.velocity[i] * dt;
     if (G.s.basis[8] < 0.9f) G.s.velocity[2] -= 9.81f * dt;  // tilted: the wheels no longer hold it up
+    G.s.velocity[2] += G.extra_dv_up;
 }
 
 bool has_log(const char *needle) {
@@ -94,6 +97,66 @@ bool has_log(const char *needle) {
     return false;
 }
 }  // namespace
+
+
+static int count_logs(const char *needle) {
+    int n = 0;
+    for (const std::string &l : G.logs) n += l.find(needle) != std::string::npos ? 1 : 0;
+    return n;
+}
+
+// Starts a simulation by a hit and returns; the car is then at rest-ish on its side or wheels.
+static void start_hit(GtModCtx *ctx, const GtModApi &api, GtMod &mod, const rollover::Settings &set) {
+    G.no_car = true;
+    if (G.step_hook) G.step_hook(ctx);
+    const int role = G.role;
+    G = Game{};
+    G.role = role;
+    realistic::init(&api, &mod, set, true);
+    G.s.position[0] = 100; G.s.position[1] = 50; G.s.position[2] = 0.40f;
+    set_euler_identity(G.s);
+    G.s.velocity[0] = 30.0f;
+    G.s.speed = 30.0f;
+    for (int i = 0; i < 40; ++i) { G.step_hook(ctx); game_step(); }
+    G.s.velocity[0] -= 14.0f;
+    G.s.velocity[1] += 8.3f;
+}
+
+static void test_review_cases(GtModCtx *ctx, const GtModApi &api, GtMod &mod, const rollover::Settings &set) {
+    // 6: a vertical push from grounded wheel records while simulating is not a wall: no impulse
+    start_hit(ctx, api, mod, set);
+    G.extra_dv_up = 0.0f;
+    for (int i = 0; i < 20; ++i) { G.step_hook(ctx); game_step(); }
+    const int hits_before = count_logs("(in the simulation)");
+    G.extra_dv_up = 3.0f;  // a "landing" every step, along the ground normal
+    for (int i = 0; i < 10; ++i) { G.step_hook(ctx); game_step(); }
+    CHECK(count_logs("(in the simulation)") == hits_before);
+    // a push ALONG the ground (a wall) is an impulse
+    G.extra_dv_up = 0.0f;
+    G.s.velocity[0] += 4.0f;
+    G.step_hook(ctx);
+    CHECK(count_logs("(in the simulation)") > hits_before);
+    // 5: the game turned the car (reset-to-track at the same place): up row far from the written one: the car goes back to the game
+    const int writes = G.pose_writes;
+    const float rows[9] = {0, 1, 0, 1, 0, 0, 0, 0, -1};  // upside down
+    std::memcpy(G.s.basis, rows, sizeof rows);
+    G.step_hook(ctx);
+    CHECK(G.tilt_on == 0 && count_logs("RESET") == 1 && G.pose_writes == writes);
+    // 7: live and replay agree: the same hit on the same state gives the same simulated poses
+    std::vector<std::string> live, replay;
+    start_hit(ctx, api, mod, set);
+    for (int i = 0; i < 80; ++i) { G.step_hook(ctx); game_step(); }
+    for (const std::string &l : G.logs) if (l.find("SIM ") != std::string::npos) live.push_back(l.substr(l.find("pos=")));
+    G.role = 3;
+    start_hit(ctx, api, mod, set);
+    for (int i = 0; i < 80; ++i) { G.step_hook(ctx); game_step(); }
+    for (const std::string &l : G.logs) if (l.find("SIM ") != std::string::npos) replay.push_back(l.substr(l.find("pos=")));
+    CHECK(!live.empty() && live.size() == replay.size());
+    bool same = live.size() == replay.size();
+    for (std::size_t i = 0; same && i < live.size(); ++i) same = live[i].substr(0, live[i].find(" kd=")) == replay[i].substr(0, replay[i].find(" kd="));
+    CHECK(same);
+    G.role = 1;
+}
 
 int main() {
     GtModApi api = make_api();
@@ -188,6 +251,7 @@ int main() {
         CHECK(handed2);
         CHECK(apex <= 1.2f * e2h && apex >= 0.5f * e2h);
     }
+    test_review_cases(&ctx, api, mod, set);
     if (g_fail == 0) std::printf("realistic_test: all passed\n");
     return g_fail == 0 ? 0 : 1;
 }

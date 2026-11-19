@@ -31,7 +31,7 @@ Event Supervisor::update_game(const GameObs &o) {
 
 Event Supervisor::update_sim(const SimObs &o) {
     if (!sim_) return Event::None;
-    if (o.jump > p_.reset_jump) {
+    if (o.jump > p_.reset_jump || o.rows_jump > p_.reset_rows) {
         reset();
         return Event::Reset;
     }

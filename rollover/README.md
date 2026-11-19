@@ -22,11 +22,12 @@ zeroes their rates, and keeps applying its wheel and suspension model whatever t
    body, which tips the car toward them).
 2. **Each physics step while it drives** (the world-step hook, before the game's step): one fixed step (1/60 s, 10 substeps) of the simulation, then the pose is written with
    the named call `car_set_pose` (position, rows, the Euler angles derived from them, velocity; the rate fields zero) and the 35-degree clamp is lifted with `tilt_free`. The
-   game's step then runs on that pose; **before the car is drawn** the same pose is written again (the car-draw hook), so what is on screen is the simulation's pose and not the
-   game's suspension step on top of it. The game's own collision (a barrier) changes the velocity it finds; the next step reads that change and applies it as an impulse.
-3. **Ground.** A plane through the four wheel records' ground heights (`car_wheel_contacts`), the slope fitted while the car is level and kept while it tumbles.
-   The hull is a box from `car_dimensions` (0.78 x wheelbase long, track/2 + 0.17 wide, 0.59 x wheelbase tall, its floor at the height the origin has over the road when the car
-   sits level on its wheels).
+   game's step then runs on that pose (the renderer and the camera read the car after that step, so what is on screen is the simulation's pose plus one step of the game's own
+   motion; a write at the car-draw hook was measured to change nothing on screen). The game's own collision (a barrier) changes the velocity it finds; the next step reads the part of
+   that change along the ground (`sim_hit_dv`) and applies it as an impulse. A car whose up row differs from the written one by more than 0.3, or that moved more than 3 m, was moved by
+   something else (reset-to-track) and goes back to the game.
+3. **Ground.** A plane through the four wheel records' ground heights (`car_wheel_contacts`), the slope fitted while the car is level, frozen from the takeover to the handback or reset.
+   The hull is a box from `car_dimensions` (0.78 x wheelbase long, track/2 + 0.17 wide, 0.59 x wheelbase tall, its floor at the height the origin has over the wheels' ground at takeover (0.35 m when the records cannot say)).
 4. **Handback.** up.z above 0.85, at least 3 floor points on the road and |w| under 0.5 rad/s for 10 steps: the final pose is written with zero rates, the clamp is restored and
    the game's suspension settles it. A position jump above 3 m (reset-to-track) ends the simulation.
 5. **Before the first hit nothing is written**: the car is the stock game's (the in-game check shows it).
@@ -91,6 +92,7 @@ tick, `docs/FINDINGS.md`); the hull proportions come from the Peugeot 206's mode
 | `restitution` | `0.15` | realistic: bounce of the hull on the road (0 - 0.9; never below 1 m/s of approach) |
 | `friction` | `0.7` | realistic: Coulomb coefficient on asphalt (0 - 2) |
 | `hit_height` | `0.2` | realistic: where a barrier hit lands on the hull side, from the floor (0) to the roof (1) |
+| `sim_hit_dv` | `1.5` | realistic: while simulating, the velocity change along the ground (m/s) in one step that counts as a barrier hit (0.2 - 20) |
 | `takeover_dv` | `5.0` | realistic: velocity change in one step (m/s) that hands the car to the simulation (1 - 50) |
 | `threshold` | `6.0` | lateral velocity change in one step (m/s) above which a hit tips the car (0.1 - 50) |
 | `gain` | `0.9` | roll rate (rad/s) per m/s above the threshold (0 - 50) |

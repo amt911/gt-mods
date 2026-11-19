@@ -17,7 +17,7 @@ namespace {
 using namespace rollphys;
 
 constexpr double kDt = 1.0 / 60.0;     // the game's physics step (FACTS "Car body state": 60 per second of game time)
-constexpr float kDefaultRest = 0.40f;  // m: the body origin's height over the road on its wheels, until measured (FACTS "Rollover body box": roof 1.2 m up at +0.8)
+constexpr float kDefaultRest = 0.35f;  // m: the body origin's height over the road on its wheels at speed when the wheel records cannot say (measured 2026-11-18)
 
 const GtModApi *g_api = nullptr;
 GtMod *g_self = nullptr;
@@ -46,10 +46,9 @@ struct State {
     PlaneGround ground;
     bool have_ground_slope = false;
     float rest_height = kDefaultRest;
-    bool rest_measured = false;
     float wrote_pos[3] = {0, 0, 0}, wrote_vel[3] = {0, 0, 0}, wrote_rows[9] = {1, 0, 0, 0, -1, 0, 0, 0, 1};
     bool wrote = false;
-    unsigned sim_steps = 0, takeovers = 0;
+    unsigned sim_steps = 0, takeovers = 0, sim_hits = 0;
     double max_up = 0;
 };
 State g;
@@ -123,6 +122,18 @@ bool update_ground(const GtWheelContact wc[4], double up_z) {
     return true;
 }
 
+// The origin's height over the road, from the state at takeover: while the car is level and at least three wheel records have ground under it, its height over their mean
+// (measured 2026-11-18: ~0.35 m driving, 0.15 m standing on the grid), else the fixed default. No history: live and replay take over from the same state and agree.
+float rest_from_wheels(const GtCarState &s, const GtWheelContact wc[4]) {
+    if (s.basis[8] < 0.9f) return kDefaultRest;
+    double mh = 0;
+    int n = 0;
+    for (int i = 0; i < 4; ++i) if (wc[i].valid) { mh += wc[i].ground_height; ++n; }
+    if (n < 3) return kDefaultRest;
+    const float now = static_cast<float>(s.position[2] - mh / n);
+    return now > 0.2f && now < 0.6f ? now : kDefaultRest;
+}
+
 // The hull from the car record (the game has no body size: the proportions are those of the Peugeot 206's model box, FACTS "Car draw matrix": 3.83 x 1.78 x
 // 1.44 m on a 2.442 m wheelbase and a 1.434 m track) and the measured height of the origin over the road.
 void size_hull(const GtCarDimensions &d) {
@@ -169,6 +180,7 @@ void begin_simulation(GtModCtx *c, const GtCarState &s, Reason why, const float 
         if (g_log) logf("HIT st=%u dv=%.2f,%.2f,%.2f at=%.2f,%.2f,%.2f reason=%d", g.steps, dv.x, dv.y, dv.z, p.x - g.body.com.x, p.y - g.body.com.y, p.z - g.body.com.z, static_cast<int>(why));
     }
     g.sim_steps = 0;
+    g.sim_hits = 0;
     g.wrote = false;
     if (g_log) logf("TAKEOVER st=%u reason=%d v=%.2f,%.2f,%.2f w=%.2f,%.2f,%.2f up.z=%.3f", g.steps, static_cast<int>(why), v.x, v.y, v.z, w.x, w.y, w.z, up_z_of(s.basis));
 }
@@ -203,27 +215,15 @@ void on_step(GtModCtx *c) {
     }
     const double speed2 = double(s.velocity[0]) * s.velocity[0] + double(s.velocity[1]) * s.velocity[1] + double(s.velocity[2]) * s.velocity[2];
     if (g.moved_at < 0 && speed2 > 1.0) g.moved_at = g.steps;
-    // the origin's height over the road while the car drives level on its wheels (measured 2026-11-18: 0.15 m standing on the grid, ~0.35 m at speed: the
-    // wheel records' height and the suspension differ), a running average over the level steps at speed: the hull's floor is where the tyres are
-    if (!g_sup->simulating() && s.basis[8] > 0.98f && speed2 > 25.0) {
-        double mh = 0;
-        int n = 0;
-        for (const GtWheelContact &w : wc) if (w.valid) { mh += w.ground_height; ++n; }
-        if (n == 4) {
-            const float now = static_cast<float>(s.position[2] - mh / 4);
-            if (now > 0.1f && now < 0.9f) {
-                g.rest_height = g.rest_measured ? 0.98f * g.rest_height + 0.02f * now : now;
-                g.rest_measured = true;
-            }
-        }
-    }
     if (!g.sized) {
         g.params.mass = g_set.mass;
         g.params.restitution = g_set.restitution;
         g.params.friction_scale = g_set.sabotage == 14 ? 0.0 : 1.0;
         size_hull(dims);
     }
-    const bool have_ground = update_ground(wc, s.basis[8]);
+    // the ground plane is frozen while the simulation drives (the wheel records move with the tumbling car and the valid set changes step to step); it is taken again from
+    // the first game step after a handback or reset
+    const bool have_ground = g_sup->simulating() ? true : update_ground(wc, s.basis[8]);
     const double jump = g.have_prev ? std::sqrt(std::pow(double(s.position[0]) - g.prev_pos[0], 2) + std::pow(double(s.position[1]) - g.prev_pos[1], 2) + std::pow(double(s.position[2]) - g.prev_pos[2], 2)) : 0.0;
     // fake hit / drop (the checks)
     const long since = g.moved_at < 0 ? -1 : static_cast<long>(g.steps) - g.moved_at;
@@ -258,16 +258,21 @@ void on_step(GtModCtx *c) {
         }
         if (e == Event::Takeover) {
             GtCarState s2 = s;
+            g.rest_height = rest_from_wheels(s, wc);  // before the fake drop moves the car: deterministic from the state at takeover (live and replay agree)
             if (fake_drop) s2.position[2] += g_fake.drop_height;
             begin_simulation(c, s2, g_sup->reason(), fake_hit ? fake_vec : nullptr, dims);
         }
     } else if (g.wrote) {
-        // the game's own step changed the velocity we wrote: a barrier hit (springs give ~0.25 m/s)
-        V3 dv{s.velocity[0] - g.wrote_vel[0], s.velocity[1] - g.wrote_vel[1], s.velocity[2] - g.wrote_vel[2] + 9.81 * kDt};
-        if (len(dv) >= TakeoverParams{}.sim_hit_dv && g_set.sabotage != 16) {
+        // the game's own step changed the velocity we wrote: a barrier hit. Only the part ALONG the ground is taken: the part along the ground normal is the game's wheels and
+        // springs (and gravity) answering a car that lands or rests on records that read grounded, not a wall
+        V3 dv{s.velocity[0] - g.wrote_vel[0], s.velocity[1] - g.wrote_vel[1], s.velocity[2] - g.wrote_vel[2]};
+        const V3 gn = g.ground.at(g.body.com.x, g.body.com.y).normal;
+        dv = dv - gn * dot(dv, gn);
+        if (len(dv) >= g_set.sim_hit_dv && g_set.sabotage != 16) {
+            ++g.sim_hits;
             const V3 p = hit_point(g.hull, g.body, dv, g_set.hit_height);
             apply_impulse(g.hull, g.params, g.body, p, dv * g.params.mass);
-            if (g_log) logf("HIT st=%u dv=%.2f,%.2f,%.2f (in the simulation)", g.steps, dv.x, dv.y, dv.z);
+            if (g_log) logf("HIT st=%u dv=%.2f,%.2f,%.2f (in the simulation) n=%u", g.steps, dv.x, dv.y, dv.z, g.sim_hits);
         }
     }
 
@@ -281,6 +286,7 @@ void on_step(GtModCtx *c) {
         so.up_z = rows[8];
         so.w = len(g.body.w);
         so.bottom_contacts = info.bottom_contacts;
+        so.rows_jump = g.wrote ? std::fmax(std::fmax(std::fabs(s.basis[6] - g.wrote_rows[6]), std::fabs(s.basis[7] - g.wrote_rows[7])), std::fabs(s.basis[8] - g.wrote_rows[8])) : 0.0;
         so.jump = g.wrote ? std::sqrt(std::pow(double(s.position[0]) - g.wrote_pos[0], 2) + std::pow(double(s.position[1]) - g.wrote_pos[1], 2) + std::pow(double(s.position[2]) - g.wrote_pos[2], 2)) : 0.0;
         const Event e = g_sup->update_sim(so);
         if (g_log) {
@@ -321,6 +327,7 @@ int init(const GtModApi *api, GtMod *self, const rollover::Settings &settings, b
     static Supervisor sup{TakeoverParams{}};
     TakeoverParams tp;
     tp.hit_dv = settings.takeover_dv;
+    tp.sim_hit_dv = settings.sim_hit_dv;
     sup = Supervisor(tp);
     g_sup = &sup;
     if (const char *fake = std::getenv("GT_MOD_ROLLOVER_FAKE")) {  // "m<steps>:<dv>"
