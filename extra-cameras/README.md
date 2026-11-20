@@ -12,8 +12,9 @@ Views, chosen in the cheat device (category **Camera**: the row `Extra view` cyc
 How: each physics step (`GT_HOOK_WORLD_STEP`) the human's car (live, or in its replay) is read; the camera function (`GT_HOOK_CAMERA`) replaces the pose with `camera_set`. Frames with no extra view selected are
 byte-identical to a run without the mod. The offsets are in the body frame; see `mod.toml`. Best with the game's chase view (in the bumper / cockpit / hood views the game hides the body).
 
-**Not done in 0.1.0:** extending the game's own SELECT cycle (and the replay's camera button) with the extra views, which needs the game's view state (not researched); the near-plane adjustment (the SDK has no accessor);
-migrating orbit-camera to `camera_get` / `camera_set`. Settings `start_view`, offsets and smoothing: `mod.toml`. Environment (checks only): `GT_MOD_CAMS_LOG=1`, `GT_MOD_CAMS_VIEW=wheel|roof|tv|heli`.
+**SELECT cycle:** the game's own SELECT now goes through the extra views too: chase, bumper, cockpit, hood, then Wheel, Roof, TV, then chase again (`GT_HOOK_VIEW_CYCLE`: the game's list stays on its first view while an extra one is shown). The replay's camera button is not extended.
+
+**Not done in 0.1.0:** the replay camera button; the near-plane adjustment (the SDK has no accessor); migrating orbit-camera to `camera_get` / `camera_set`. Settings `start_view`, offsets and smoothing: `mod.toml`. Environment (checks only): `GT_MOD_CAMS_LOG=1`, `GT_MOD_CAMS_VIEW=wheel|roof|tv|heli`.
 
 ```bash
 cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++ -DGT_SDK_DIR=../gran-turismo-decomp/include && cmake --build build --target extra_cameras cam_test

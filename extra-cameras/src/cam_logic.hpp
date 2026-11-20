@@ -35,6 +35,20 @@ constexpr int kViewCount = 4;
 View next_view(View v, int direction);  // cycles Off -> Wheel -> Roof -> TV -> Off (direction +1) or backwards (-1)
 const char *view_name(View v);
 
+// ---- The game's SELECT cycle, extended (docs/MODS.md "API v9: view cycle" in gran-turismo-decomp). The game moves the position of its view list by +-1 with wrap (count = 4 in a race: chase, bumper,
+// cockpit, hood). The mod keeps a virtual position v in [0, count + extra): below `count` it is the game's position, from `count` on it is an extra view (Wheel, Roof, TV) while the game's own
+// position stays on its first view (the chase view, which draws the body). ----
+// +1 / -1 when the game moved from p0 to p1 by one step (with wrap), 0 when it did not move or the move is no single step.
+int cycle_step(int p0, int p1, int count);
+// The virtual position after one step in `dir` (+-1), with wrap over count + extra.
+int cycle_advance(int v, int dir, int count, int extra);
+// The position the GAME's list must have for the virtual position v.
+int cycle_game_position(int v, int count);
+// The extra view of v (Off below `count`).
+View cycle_view(int v, int count);
+// The virtual position of an extra view chosen from the menu (Off: the game's own position `game_position`).
+int cycle_virtual(View view, int count, int game_position);
+
 struct Params {
     float wheel_up = 0.15f;       // m above the body origin: low, at the wheel arch
     float wheel_out = 0.0f;       // m outward beyond the wheel's centre line (0 = on the front-left wheel)

@@ -27,6 +27,10 @@ int g_sabotage = 0;  // -DCAMS_SABOTAGE=1: the pose is never set (the offsets ar
 
 std::atomic<int> g_view{0};          // cams::View
 std::atomic<bool> g_heli{false};     // the replay helicopter camera
+constexpr int kGameViews = 4, kExtraViews = 3;  // the game's race list (chase, bumper, cockpit, hood) and ours (Wheel, Roof, TV)
+std::atomic<int> g_game_pos{0};      // the game's own position in its list, as last seen
+std::atomic<int> g_virtual{-1};      // the SELECT cycle's virtual position (cam_logic cycle_*); -1 = not seen yet
+std::atomic<unsigned> g_cycle_events{0};
 constexpr float kStep = 1.0f / 60.0f;
 constexpr std::uint64_t kStaleVblanks = 300;  // the physics stops while the game is paused: the last pose stays in force this long, then the game's camera returns (menus, garage)
 std::uint64_t g_last_step_vblank = 0;
@@ -108,6 +112,42 @@ void on_step(GtModCtx *ctx) {
     g_snap.valid = true;
     g_snap.vblank = vb;
     g_heli_pos.step(cams::heli_target(g_snap.car, g_params), kStep, g_params.heli_smooth_s);
+}
+
+// GT_HOOK_VIEW_CYCLE: the game applying its view list (0x089274C8), which a SELECT press does after moving the list position by one (with wrap): position != previous. The mod follows the presses
+// with a virtual position that has the extra views after the game's four, and changes the position the game applies: while an extra view is shown the game stays on its first view (chase).
+// Not in a replay (its list is another one).
+void on_view_cycle(GtModCtx *ctx) {
+    std::uint32_t pos = 0, prev = 0, n = 0;
+    const bool ok = g_sabotage != 2 && g_api->replay_active(g_self, ctx) == 0 &&  // check build (-DCAMS_SABOTAGE=2): the presses are not followed
+                    g_api->view_cycle(g_self, ctx, &pos, &prev, &n) == 0 && static_cast<int>(n) == kGameViews;
+    static unsigned applies = 0;
+    if (g_log && applies < 24) {
+        ++applies;
+        char line[160];
+        std::snprintf(line, sizeof line, "APPLY n=%u ok=%d pos=%u prev=%u count=%u ra=%08x", applies, ok ? 1 : 0, pos, prev, n, g_api->gpr(ctx, 31));
+        g_api->log(g_self, line);
+    }
+    if (ok && pos != prev) {
+        int v = g_virtual.load();
+        if (v < 0 || (v < kGameViews && v != static_cast<int>(prev))) v = static_cast<int>(prev);  // first sight, or the game moved by itself: follow it
+        const int dir = cams::cycle_step(static_cast<int>(prev), static_cast<int>(pos), kGameViews);
+        if (dir != 0) {
+            v = cams::cycle_advance(v, dir, kGameViews, kExtraViews);
+            const std::uint32_t want = static_cast<std::uint32_t>(cams::cycle_game_position(v, kGameViews));
+            if (want != pos && g_api->view_cycle_set(g_self, ctx, want) == 0) pos = want;
+            g_virtual.store(v);
+            g_view.store(static_cast<int>(cams::cycle_view(v, kGameViews)));
+            g_game_pos.store(static_cast<int>(pos));
+            const unsigned events = g_cycle_events.fetch_add(1) + 1;
+            if (g_log) {
+                char line[160];
+                std::snprintf(line, sizeof line, "CYCLE press=%u dir=%d game %u->%u virtual=%d view=%s", events, dir, prev, pos, v, cams::view_name(cams::cycle_view(v, kGameViews)));
+                g_api->log(g_self, line);
+            }
+        }
+    }
+    g_api->call_original(ctx);
 }
 
 void on_car_draw(GtModCtx *ctx) {
@@ -198,7 +238,11 @@ void on_camera(GtModCtx *ctx) {  // GT_HOOK_CAMERA: never call_original here (th
 
 // Menu (any thread): atomics only.
 void view_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Extra view: %s", cams::view_name(static_cast<cams::View>(g_view.load()))); }
-void view_activate(GtMod *, int direction) { g_view.store(static_cast<int>(cams::next_view(static_cast<cams::View>(g_view.load()), direction < 0 ? -1 : 1))); }
+void view_activate(GtMod *, int direction) {
+    const cams::View next = cams::next_view(static_cast<cams::View>(g_view.load()), direction < 0 ? -1 : 1);
+    g_view.store(static_cast<int>(next));
+    g_virtual.store(cams::cycle_virtual(next, kGameViews, g_game_pos.load()));  // the SELECT cycle continues from here
+}
 void heli_label(GtMod *, char *out, std::uint32_t capacity) { std::snprintf(out, capacity, "Replay camera: %s", g_heli.load() ? "Helicopter" : "Game"); }
 void heli_activate(GtMod *, int) { g_heli.store(!g_heli.load()); }
 void next_view_action(GtMod *, GtModCtx *) { view_activate(nullptr, 1); }
@@ -237,8 +281,10 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     const char *forced = std::getenv("GT_MOD_CAMS_VIEW");  // the checks' choice (there is no keyboard): wheel | roof | tv | heli
     if (forced != nullptr && std::string(forced) == "heli") g_heli.store(true);
     else g_view.store(static_cast<int>(parse_view(forced != nullptr ? forced : api->config(self, "start_view"))));
+    g_virtual.store(g_view.load() == 0 ? -1 : cams::cycle_virtual(static_cast<cams::View>(g_view.load()), kGameViews, 0));
     if (api->hook_point(self, GT_HOOK_WORLD_STEP, on_step) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_CAMERA, on_camera) != 0) return 1;
+    if (api->hook_point(self, GT_HOOK_VIEW_CYCLE, on_view_cycle) != 0) return 1;
     if (g_log) {
         if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
         if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;

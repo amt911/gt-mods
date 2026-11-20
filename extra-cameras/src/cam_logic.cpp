@@ -59,6 +59,28 @@ View next_view(View v, int direction) {
     return static_cast<View>(n);
 }
 
+int cycle_step(int p0, int p1, int count) {
+    if (count < 3 || p0 == p1 || p0 < 0 || p1 < 0 || p0 >= count || p1 >= count) return 0;  // with two views a step is ambiguous
+    if (p1 == (p0 + 1) % count) return 1;
+    if (p1 == (p0 + count - 1) % count) return -1;
+    return 0;
+}
+
+int cycle_advance(int v, int dir, int count, int extra) {
+    const int n = count + extra;
+    if (n <= 0) return 0;
+    return ((v + (dir < 0 ? -1 : 1)) % n + n) % n;
+}
+
+int cycle_game_position(int v, int count) { return v < count ? v : 0; }
+
+View cycle_view(int v, int count) {
+    const int e = v - count + 1;
+    return e >= 1 && e < kViewCount ? static_cast<View>(e) : View::Off;
+}
+
+int cycle_virtual(View view, int count, int game_position) { return view == View::Off ? game_position : count + static_cast<int>(view) - 1; }
+
 const char *view_name(View v) {
     switch (v) {
     case View::Off: return "Game";

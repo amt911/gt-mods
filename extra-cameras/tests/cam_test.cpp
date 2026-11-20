@@ -117,6 +117,27 @@ int main() {
         tilted.forward = normalize(Vec3{0, 1, 0.5f});
         assert(near(heli_target(tilted, p), t, 1e-4f));
     }
+    // the SELECT cycle: game positions 0..3, extras 4..6; the game's own position stays on 0 while an extra view is shown
+    {
+        assert(cycle_step(0, 1, 4) == 1 && cycle_step(3, 0, 4) == 1 && cycle_step(0, 3, 4) == -1 && cycle_step(2, 1, 4) == -1 && cycle_step(1, 1, 4) == 0 && cycle_step(0, 2, 4) == 0);
+        assert(cycle_step(0, 1, 2) == 0 && cycle_step(0, 5, 4) == 0 && cycle_step(-1, 0, 4) == 0);
+        assert(cycle_advance(3, 1, 4, 3) == 4 && cycle_advance(6, 1, 4, 3) == 0 && cycle_advance(0, -1, 4, 3) == 6 && cycle_advance(4, -1, 4, 3) == 3 && cycle_advance(2, 1, 4, 0) == 3);
+        assert(cycle_game_position(2, 4) == 2 && cycle_game_position(4, 4) == 0 && cycle_game_position(6, 4) == 0);
+        assert(cycle_view(3, 4) == View::Off && cycle_view(4, 4) == View::Wheel && cycle_view(5, 4) == View::Roof && cycle_view(6, 4) == View::Tv && cycle_view(7, 4) == View::Off);
+        assert(cycle_virtual(View::Off, 4, 2) == 2 && cycle_virtual(View::Wheel, 4, 2) == 4 && cycle_virtual(View::Tv, 4, 2) == 6);
+        // a full forward lap: hood (3) -> Wheel -> Roof -> TV -> chase (0), and the same backwards
+        int v = 3;
+        const View expect[4] = {View::Wheel, View::Roof, View::Tv, View::Off};
+        for (int i = 0; i < 4; ++i) {
+            v = cycle_advance(v, 1, 4, 3);
+            assert(cycle_view(v, 4) == expect[i]);
+        }
+        assert(v == 0);
+        for (int i = 2; i >= 0; --i) {
+            v = cycle_advance(v, -1, 4, 3);
+            assert(cycle_view(v, 4) == (i == 2 ? View::Tv : (i == 1 ? View::Roof : View::Wheel)));
+        }
+    }
     assert(jumped({0, 0, 0}, {100, 0, 0}, 15.0f) && !jumped({0, 0, 0}, {1, 0, 0}, 15.0f));
     assert(std::string(view_name(View::Off)) == "Game");
     return 0;
