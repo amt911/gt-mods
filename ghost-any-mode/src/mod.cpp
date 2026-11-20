@@ -177,7 +177,7 @@ void on_step(GtModCtx *ctx) {
         }
         if (g_log) {
             char line[160];
-            std::snprintf(line, sizeof line, "LAP n=%u steps=%u best=%u new_best=%d", g_rec.laps(), steps, g_rec.best().steps(), better ? 1 : 0);
+            std::snprintf(line, sizeof line, "LAP n=%u steps=%u best=%u new_best=%d vb=%llu", g_rec.laps(), steps, g_rec.best().steps(), better ? 1 : 0, static_cast<unsigned long long>(vb));
             g_api->log(g_self, line);
         }
     }
