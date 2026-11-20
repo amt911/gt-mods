@@ -7,4 +7,5 @@ deformation = "Dents the player's car where it hits: the deeper the hit, the dee
 draw-distance = "Pushes the race world's far clip plane further away so far scenery shows instead of popping in."
 orbit-camera = "Gran Turismo 7 style orbit camera on the right stick."
 reset-to-track = "One button puts the player's car back on the road, upright and facing the way it was going."
+weather = "Time of day (noon, afternoon, sunset, dusk or progressive) as a colour grade, and rain streaks over the race."
 rollover = "Rigid-body rollovers: a hard hit tumbles, bounces and slides the player's car like a body; arcade style keeps the scripted roll."
