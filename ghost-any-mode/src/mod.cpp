@@ -116,8 +116,9 @@ void save_best() {  // g_mutex held
 }
 
 void on_step(GtModCtx *ctx) {
-    g_api->call_original(ctx);
+    // read a0 (the world) BEFORE call_original: with `--decomp on` the decompiled step clobbers it (docs/MODS.md hook rules)
     const std::uint32_t world = g_api->gpr(ctx, 4);
+    g_api->call_original(ctx);
     GtCar human;
     if (!find_human(ctx, world, &human)) return;
     GtCarState st;
