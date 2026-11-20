@@ -1,14 +1,27 @@
 id = "rollover"
 name = "Rollovers"
-version = "0.4.0"
+version = "0.5.0"
 library = "librollover.so"
-api = 1
+api = 7
 enabled = false
 
 [settings]
-# realistic: only big impacts roll the car; arcade: the threshold is halved and the gain raised, so smaller hits roll it
+# realistic: a rigid-body simulation takes the car when it is hit hard, flipped or airborne and spinning (gravity, bounces, friction), and hands it back on its wheels.
+# arcade: the 0.4.0 scripted roll (a held roll rate after a hard side impact; threshold halved, gain x1.5), no simulation
 style = "realistic"
-# lateral velocity change of the car in ONE physics step (m/s) above which a hit tips the car
+# realistic: mass of the simulated car (kg)
+mass = 1300.0
+# realistic: bounce of the car's hull on the ground (0 = none; below 1 m/s of approach there is never a bounce)
+restitution = 0.15
+# realistic: Coulomb friction on asphalt (off-track surfaces get 5/7 of it)
+friction = 0.7
+# realistic: where a barrier hit lands on the car's side, as a fraction of its height above the floor (barriers and kerbs strike the lower body: the car tips toward them)
+hit_height = 0.2
+# realistic: velocity change in ONE physics step (m/s) that hands the car to the simulation
+takeover_dv = 5.0
+# realistic: while the simulation drives, a velocity change along the ground above this (m/s) in one step is a barrier hit and becomes an impulse
+sim_hit_dv = 1.5
+# arcade: lateral velocity change of the car in ONE physics step (m/s) above which a hit tips the car
 threshold = 6.0
 # roll rate (rad/s) per m/s of lateral velocity change above the threshold
 gain = 0.9

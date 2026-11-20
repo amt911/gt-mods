@@ -68,10 +68,11 @@ Nothing game-derived lives here: only hand-written mod code.
   where it was, not to the nearest asphalt. `GT_MOD_RESET_FAKE=<step>` holds the button from that player-car step (a debugging aid); `GT_MOD_RESET_LOG=1` logs the car's state (used by `tools/mod_reset_check.sh`).
 - `cheats` - race-time cheats as rows of the F9 menu (keyboard or pad): slow motion (0.5x / 0.25x, player and AI cars), freeze AI, AI speed (0.5x-1.25x), nitro, moon gravity, jump and money (Enter/Right +1,000,000 Cr, Left -1,000,000; the save folder is copied to `savedata-backups/` before the first change; it stays once the game saves). Needs mod API v3 (the named SDK: host repo PR #536)
   (`api = 2`). Disabled by default and both cheats start off. See `cheats/README.md`; check: `tools/mod_cheats_check.sh` in the host repo.
-- `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees). Hooks the flag reader
-  `0x0894CCB8` (a dormant switch) to lift the clamp and adds a roll rate on a hard side impact (a lateral velocity change above `threshold`
-  in one physics step; `gain`, `cap`, `style = realistic|arcade` in `mod.toml`); the dormant flip state machine the flag would also wake
-  (the car sinks through the road and pops back up) is kept asleep. A body box (`body_box`, on by default, 0.2.0) stops the tumbling car's roof and sides sinking into the road. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
+- `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees), and tumble, bounce and slide like a body. 0.5.0 (`api = 7`, host API 7): `style = "realistic"` (default) is a rigid-body
+  simulation (mass, inertia, gravity, impulse contacts of a box hull with the road: restitution, Coulomb friction) that takes the player's car when a hit changes its velocity by more than `takeover_dv` in one physics step, when it
+  is on its side, or when it is airborne and spinning, writes its pose through the named `car_set_pose` with the clamp lifted by `tilt_free`, and hands the car back on its wheels (a car on its roof stays there until reset-to-track).
+  `style = "arcade"` is the 0.4.0 scripted roll (a roll rate held after a lateral velocity change above `threshold`; `gain`, `cap`) plus the body box (`body_box`, 0.2.0). The dormant flip state machine the clamp flag would also wake
+  (the car sinks through the road and pops back up) is kept asleep by the host. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
   See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
 - `telemetry` - a panel over the race: speed, longitudinal / lateral G, throttle and brake bars and a 5-second graph, drawn with the mod draw API (needs mod API 8, host PR #667). Read-only; hidden = frames identical to no mod. Cheat device row *Telemetry panel* (Race) and hotkey `T`. Per-wheel slip waits for an SDK `car_wheels` call. See `telemetry/README.md`; check: `tools/telemetry_check.sh`.
 
