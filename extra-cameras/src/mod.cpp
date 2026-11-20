@@ -68,8 +68,10 @@ bool find_human(GtModCtx *ctx, std::uint32_t world, GtCar *out) {
 }
 
 void on_step(GtModCtx *ctx) {
-    g_api->call_original(ctx);
+    // The world is a0: read it BEFORE call_original. With `--decomp on` the decompiled step runs inside call_original and leaves other values in a0 (measured: the snapshot was never taken, so the
+    // camera function never set a pose); the recompiled build returns from call_original before the body has run, which is why it worked with `--decomp off`.
     const std::uint32_t world = g_api->gpr(ctx, 4);
+    g_api->call_original(ctx);
     GtCar human;
     if (!find_human(ctx, world, &human)) return;
     GtCarState st;
@@ -170,6 +172,17 @@ void on_mesh_draw(GtModCtx *ctx) {
     g_api->call_original(ctx);
 }
 
+// GT_MOD_CAMERA_DEBUG=1: why the camera function did or did not set a pose (diagnosis of `--decomp on`).
+struct CamStats {
+    unsigned calls = 0, invalid = 0, stale = 0, replay = 0, off = 0, set_failed = 0, set_ok = 0;
+};
+CamStats g_stats;
+void print_stats(std::uint64_t now, std::uint64_t snap_vb) {
+    if (g_log && std::getenv("GT_MOD_CAMERA_DEBUG") != nullptr && g_stats.calls % 1200 == 0)
+        std::fprintf(stderr, "[mod:extra-cameras] CAMDBG calls=%u invalid=%u stale=%u replay=%u off=%u set_failed=%u set_ok=%u now=%llu snap_vb=%llu view=%d\n", g_stats.calls, g_stats.invalid, g_stats.stale,
+                     g_stats.replay, g_stats.off, g_stats.set_failed, g_stats.set_ok, static_cast<unsigned long long>(now), static_cast<unsigned long long>(snap_vb), g_view.load());
+}
+
 void on_camera(GtModCtx *ctx) {  // GT_HOOK_CAMERA: never call_original here (the host does)
     Snapshot snap;
     cams::Pose pose;
@@ -178,11 +191,15 @@ void on_camera(GtModCtx *ctx) {  // GT_HOOK_CAMERA: never call_original here (th
         snap = g_snap;
     }
     const std::uint64_t now = g_api->vblank_index(g_self);
-    if (!snap.valid || now > snap.vblank + kStaleVblanks) return;  // no race running (a pause shorter than ~5 s keeps the view): the game's own camera
+    ++g_stats.calls;
+    print_stats(now, snap.vblank);
+    if (!snap.valid) { ++g_stats.invalid; return; }
+    if (now > snap.vblank + kStaleVblanks) { ++g_stats.stale; return; }  // no race running (a pause shorter than ~5 s keeps the view): the game's own camera
     const bool replay = g_api->replay_active(g_self, ctx) != 0;
     const cams::View view = static_cast<cams::View>(g_view.load());
     const char *name;
     if (replay) {
+        ++g_stats.replay;
         if (!g_heli.load()) return;
         std::lock_guard<std::mutex> lock(g_mutex);
         if (!g_heli_pos.has_value()) return;
@@ -199,11 +216,16 @@ void on_camera(GtModCtx *ctx) {  // GT_HOOK_CAMERA: never call_original here (th
         pose = g_tv.pose(snap.car, g_params);
         name = "tv";
     } else {
+        ++g_stats.off;
         return;
     }
     float eye[3] = {pose.eye.x, pose.eye.y, pose.eye.z};
     // check build (-DCAMS_SABOTAGE=1): the offset is ignored, i.e. the pose is computed and logged but never handed to the game
-    if (g_sabotage != 1 && g_api->camera_set(g_self, ctx, eye, pose.basis) != 0) return;
+    if (g_sabotage != 1 && g_api->camera_set(g_self, ctx, eye, pose.basis) != 0) {
+        ++g_stats.set_failed;
+        return;
+    }
+    ++g_stats.set_ok;
     if (g_log) {
         // the car's body origin in view space as this pose sees it (OpenGL view space: x right, y up, -z forward)
         const cams::Vec3 d = snap.car.position - cams::Vec3{eye[0], eye[1], eye[2]};
