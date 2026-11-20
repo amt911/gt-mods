@@ -1,0 +1,16 @@
+id = "weather"
+name = "Weather and time of day"
+version = "0.1.0"
+library = "libweather.so"
+api = 8
+enabled = false
+
+[settings]
+# time of day: "noon" (no change), "afternoon", "sunset", "dusk" or "progressive" (walks through them over the race); the cheat device's Race page changes it in game
+preset = "noon"
+# the progressive mode lasts this many physics steps of the race (60 per second of game time: 18000 = 5 minutes)
+progressive_steps = 18000
+# rain: 0 off, 1 light, 2 medium, 3 heavy (streaks over the picture and a darker, desaturated grade)
+rain = 0
+# grip reduction, 0 (off) .. 1: the share of each step's sideways velocity change that is taken away (driving changes only, a hit is left alone)
+grip_loss = 0.0
