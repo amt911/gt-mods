@@ -15,7 +15,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
-#include <set>
 #include <string>
 
 namespace {
@@ -50,8 +49,6 @@ cams::Smoother g_heli_pos;
 std::uint32_t g_car_handle = 0;
 unsigned g_frame_logs = 0;
 
-// the player's model blobs, to log where the game draws the car (the in-game check)
-std::set<std::uint32_t> g_player_blobs;
 
 float setting(const char *key, float fallback) {
     const char *text = g_api->config(g_self, key);
@@ -150,36 +147,24 @@ void on_view_cycle(GtModCtx *ctx) {
     g_api->call_original(ctx);
 }
 
-void on_car_draw(GtModCtx *ctx) {
-    uint32_t car = 0, model = 0;
-    if (g_log && g_api->draw_car_model(g_self, ctx, &car, &model) == 0) {
-        uint32_t blobs[64];
-        std::lock_guard<std::mutex> lock(g_mutex);
-        if (g_car_handle == 0u || car == g_car_handle) {
-            g_player_blobs.clear();
-            const uint32_t n = g_api->model_blobs(g_self, ctx, model, blobs, 64);
-            for (uint32_t i = 0; i < n; ++i) g_player_blobs.insert(blobs[i]);
-        }
-    }
-    g_api->call_original(ctx);
-}
-
 // The in-game check's evidence: where the game draws the player's car, in view space (the translation row of the part's world matrix), against where the pose put it.
+constexpr float kDrawPick = 2.5f;  // m: a car-like draw this close (per component) to where the pose puts the player's car is taken for it
 cams::Vec3 g_expected_view{0, 0, 0};
 std::atomic<bool> g_have_expected{false};
 void on_mesh_draw(GtModCtx *ctx) {
     if (g_log && g_have_expected.load()) {
-        const uint32_t blob = g_api->draw_mesh_blob(ctx);
-        bool mine;
-        {
-            std::lock_guard<std::mutex> lock(g_mutex);
-            mine = g_player_blobs.count(blob) != 0u;
-        }
         static unsigned logged = 0;
         float m[12];
-        if (mine && logged < 400 && g_api->draw_matrix(g_self, ctx, m) == 0) {
-            ++logged;
-            std::fprintf(stderr, "[mod:extra-cameras] DRAW seen=(%.3f %.3f %.3f) expected=(%.3f %.3f %.3f)\n", m[9], m[10], m[11], g_expected_view.x, g_expected_view.y, g_expected_view.z);
+        if (logged < 400 && g_api->draw_matrix(g_self, ctx, m) == 0) {
+            // The player's car: its parts are drawn from the model container early on and from VRAM copies later (FACTS "VRAM copies of the model parts"), so the blob alone does not tell. Every part of a car is
+            // drawn with the same matrix, whose three rows are the box's half extents (0.4..3.5 m each); of those, the draw that lands within DRAW_PICK of where the pose puts the car is the player's.
+            const float l0 = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]), l1 = std::sqrt(m[3] * m[3] + m[4] * m[4] + m[5] * m[5]), l2 = std::sqrt(m[6] * m[6] + m[7] * m[7] + m[8] * m[8]);
+            const bool car_like = l0 > 0.4f && l0 < 3.5f && l1 > 0.4f && l1 < 3.5f && l2 > 0.4f && l2 < 3.5f;
+            const bool near_pose = std::fabs(m[9] - g_expected_view.x) <= kDrawPick && std::fabs(m[10] - g_expected_view.y) <= kDrawPick && std::fabs(m[11] - g_expected_view.z) <= kDrawPick;
+            if (car_like && near_pose) {
+                ++logged;
+                std::fprintf(stderr, "[mod:extra-cameras] DRAW seen=(%.3f %.3f %.3f) expected=(%.3f %.3f %.3f)\n", m[9], m[10], m[11], g_expected_view.x, g_expected_view.y, g_expected_view.z);
+            }
         }
     }
     g_api->call_original(ctx);
@@ -286,7 +271,6 @@ extern "C" __attribute__((visibility("default"))) int gt_mod_init(const GtModApi
     if (api->hook_point(self, GT_HOOK_CAMERA, on_camera) != 0) return 1;
     if (api->hook_point(self, GT_HOOK_VIEW_CYCLE, on_view_cycle) != 0) return 1;
     if (g_log) {
-        if (api->hook_point(self, GT_HOOK_CAR_DRAW, on_car_draw) != 0) return 1;
         if (api->hook_point(self, GT_HOOK_MESH_DRAW, on_mesh_draw) != 0) return 1;
     }
     if (api->add_entry(self, "Camera", "extra_view", view_label, view_activate) != 0) return 1;
