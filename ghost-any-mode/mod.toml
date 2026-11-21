@@ -1,0 +1,17 @@
+id = "ghost-any-mode"
+name = "Best-lap ghost"
+version = "0.1.0"
+library = "libghost_any_mode.so"
+api = 9
+enabled = false
+
+[settings]
+# draw the ghost (the cheat device's Race page toggles it)
+show = true
+# save the best lap per start line and car in <mods dir>/ghost-any-mode/ and load it when the same one is raced again
+persist = false
+# the ghost's box, in metres: the car's size and how far its centre is above the car's position
+box_length = 4.5
+box_width = 1.9
+box_height = 1.3
+box_lift = 0.25
