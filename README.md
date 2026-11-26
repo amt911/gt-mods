@@ -74,6 +74,7 @@ Nothing game-derived lives here: only hand-written mod code.
   `style = "arcade"` is the 0.4.0 scripted roll (a roll rate held after a lateral velocity change above `threshold`; `gain`, `cap`) plus the body box (`body_box`, 0.2.0). The dormant flip state machine the clamp flag would also wake
   (the car sinks through the road and pops back up) is kept asleep by the host. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
   See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
+- `telemetry` - a panel over the race: speed, longitudinal / lateral G, throttle and brake bars and a 5-second graph, drawn with the mod draw API (needs mod API 8, host PR #667). Read-only; hidden = frames identical to no mod. Cheat device row *Telemetry panel* (Race) and hotkey `T`. Per-wheel slip waits for an SDK `car_wheels` call. See `telemetry/README.md`; check: `tools/telemetry_check.sh`.
 
 ## Build
 

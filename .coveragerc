@@ -1,0 +1,4 @@
+[run]
+# tools/telemetry_check.py is the judge of an in-game check: it reads sys.argv at import and imports the host checkout's tools/mod_camera_check.py, so it only runs
+# (python -I tools/telemetry_check.py HOST OUT ...) against real frames from gt_play. The coverage gate covers the tools that are unit-testable (make_index).
+omit = tools/telemetry_check.py
