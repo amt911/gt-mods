@@ -29,6 +29,8 @@ namespace {
 struct Game {
     GtCarState s{};
     int pose_writes = 0, tilt_on = 0, tilt_calls = 0;
+    int writes_this_hook = 0;          // the post-step test: writes in one hook call, and the first one (the pose the step starts from)
+    float first_write[3] = {0, 0, 0};
     float ground_h = 0.0f;
     std::vector<std::string> logs;
     GtHookFn step_hook = nullptr;
@@ -46,7 +48,12 @@ int hook_point(GtMod *, GtHookPoint p, GtHookFn fn) {
     if (p == GT_HOOK_WORLD_STEP) G.step_hook = fn;
     return 0;
 }
-void call_original(GtModCtx *) {}
+// The game's own step inside call_original, when step_moves is set: it integrates the velocity once more (measured 2026-11-26: kd/(|v| dt) = 1.02 airborne)
+bool step_moves = false;
+void call_original(GtModCtx *) {
+    if (step_moves)
+        for (int i = 0; i < 3; ++i) G.s.position[i] += G.s.velocity[i] / 60.0f;
+}
 std::uint32_t gpr(GtModCtx *, unsigned) { return 0x09000000u; }
 std::uint32_t race_cars(GtMod *, GtModCtx *, std::uint32_t, GtCar *out, std::uint32_t) {
     if (G.no_car) return 0;
@@ -60,6 +67,7 @@ int car_wheel_contacts(GtMod *, GtModCtx *, std::uint32_t, std::uint32_t, GtWhee
 }
 int car_set_pose(GtMod *, GtModCtx *, std::uint32_t, const float p[3], const float b[9], const float v[3], const float *) {
     ++G.pose_writes;
+    if (G.writes_this_hook++ == 0) std::memcpy(G.first_write, p, sizeof G.first_write);
     for (int i = 0; i < 3; ++i) { G.s.position[i] = p[i]; G.s.velocity[i] = v[i]; }
     std::memcpy(G.s.basis, b, 9 * sizeof(float));
     G.s.speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -120,6 +128,31 @@ static void start_hit(GtModCtx *ctx, const GtModApi &api, GtMod &mod, const roll
     for (int i = 0; i < 40; ++i) { G.step_hook(ctx); game_step(); }
     G.s.velocity[0] -= 14.0f;
     G.s.velocity[1] += 8.3f;
+}
+
+// The camera and the draw matrix read the state after the game's step: while the simulation drives, the hook puts the simulated pose back after
+// call_original, so the game's own motion never reaches the picture (spec 2026-11-26 rollover-jitter); sabotage 17 skips that write.
+static void test_post_step_write(GtModCtx *ctx, const GtModApi &api, GtMod &mod, rollover::Settings set) {
+    for (int sabotage : {0, 17}) {
+        set.sabotage = sabotage;
+        start_hit(ctx, api, mod, set);
+        G.step_hook(ctx);                       // the takeover step: the first simulated pose goes in
+        step_moves = true;
+        double worst_gap = 0;
+        for (int i = 0; i < 10; ++i) {
+            const int writes = G.pose_writes;
+            G.writes_this_hook = 0;
+            G.step_hook(ctx);
+            CHECK(G.pose_writes - writes == (sabotage == 17 ? 1 : 2));   // before the step, and again after it
+            // what the camera reads after the hook, against the simulated pose the step started from
+            const double gap = std::sqrt(std::pow(G.s.position[0] - G.first_write[0], 2) + std::pow(G.s.position[1] - G.first_write[1], 2) +
+                                         std::pow(G.s.position[2] - G.first_write[2], 2));
+            worst_gap = std::fmax(worst_gap, gap);
+        }
+        step_moves = false;
+        if (sabotage == 0) CHECK(worst_gap < 1e-4);   // the game's motion is undone: the picture is the simulation's
+        else CHECK(worst_gap > 0.05);                 // without the post-step write the car is drawn one step of motion off (the shake)
+    }
 }
 
 static void test_review_cases(GtModCtx *ctx, const GtModApi &api, GtMod &mod, const rollover::Settings &set) {
@@ -252,6 +285,7 @@ int main() {
         CHECK(apex <= 1.2f * e2h && apex >= 0.5f * e2h);
     }
     test_review_cases(&ctx, api, mod, set);
+    test_post_step_write(&ctx, api, mod, set);
     if (g_fail == 0) std::printf("realistic_test: all passed\n");
     return g_fail == 0 ? 0 : 1;
 }

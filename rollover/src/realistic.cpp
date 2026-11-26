@@ -50,6 +50,9 @@ struct State {
     float rest_height = kDefaultRest;
     float wrote_pos[3] = {0, 0, 0}, wrote_vel[3] = {0, 0, 0}, wrote_rows[9] = {1, 0, 0, 0, -1, 0, 0, 0, 1};
     bool wrote = false;
+    // what the game's own step left after call_original (the post-step write puts the simulated pose back over it)
+    bool have_post = false, post_written = false;
+    float post_pos[3] = {0, 0, 0}, post_vel[3] = {0, 0, 0}, post_rows[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     unsigned sim_steps = 0, takeovers = 0, sim_hits = 0;
     double max_up = 0;
 };
@@ -271,7 +274,10 @@ void on_step(GtModCtx *c) {
     } else if (g.wrote) {
         // the game's own step changed the velocity we wrote: a barrier hit. Only the part ALONG the ground is taken: the part along the ground normal is the game's wheels and
         // springs (and gravity) answering a car that lands or rests on records that read grounded, not a wall
+        // what changed the velocity written: the game's step (read right after it, before the post-step write puts the simulated one back) and anything
+        // between that write and this step (another mod; with the post-step write the game itself leaves it alone)
         V3 dv{s.velocity[0] - g.wrote_vel[0], s.velocity[1] - g.wrote_vel[1], s.velocity[2] - g.wrote_vel[2]};
+        if (g.have_post && g.post_written) dv = dv + V3{g.post_vel[0] - g.wrote_vel[0], g.post_vel[1] - g.wrote_vel[1], g.post_vel[2] - g.wrote_vel[2]};
         const V3 gn = g.ground.at(g.body.com.x, g.body.com.y).normal;
         dv = dv - gn * dot(dv, gn);
         if (len(dv) >= g_set.sim_hit_dv && g_set.sabotage != 16) {
@@ -301,9 +307,12 @@ void on_step(GtModCtx *c) {
             const double energy = g.params.mass * g.params.gravity * g.body.com.z + 0.5 * g.params.mass * dot(g.body.v, g.body.v) + 0.5 * (I.x * wb.x * wb.x + I.y * wb.y * wb.y + I.z * wb.z * wb.z);
             // kd: how far the game's own step left the car from the pose written last (the game integrates the velocity once more and its suspension acts): the pose the game reports at this step
             const double kd = g.wrote ? so.jump : 0.0, kup = g.wrote ? std::sqrt(std::pow(double(s.basis[6]) - g.wrote_rows[6], 2) + std::pow(double(s.basis[7]) - g.wrote_rows[7], 2) + std::pow(double(s.basis[8]) - g.wrote_rows[8], 2)) : 0.0;
-            logf("SIM st=%u n=%u pos=%.3f,%.3f,%.3f vel=%.2f,%.2f,%.2f w=%.2f,%.2f,%.2f up.z=%.3f lowest=%.3f contacts=%d/%d ground=%.3f E=%.0f com.z=%.3f kd=%.4f,%.4f", g.steps, g.sim_steps,
+            // kstep: how far the game's own step moved the car from the pose written before it (read after call_original; the post-step write undoes it)
+            const double kstep = g.have_post ? std::sqrt(std::pow(double(g.post_pos[0]) - g.wrote_pos[0], 2) + std::pow(double(g.post_pos[1]) - g.wrote_pos[1], 2) +
+                                                         std::pow(double(g.post_pos[2]) - g.wrote_pos[2], 2)) : 0.0;
+            logf("SIM st=%u n=%u pos=%.3f,%.3f,%.3f vel=%.2f,%.2f,%.2f w=%.2f,%.2f,%.2f up.z=%.3f lowest=%.3f contacts=%d/%d ground=%.3f E=%.0f com.z=%.3f kd=%.4f,%.4f kstep=%.4f", g.steps, g.sim_steps,
                  o.x, o.y, o.z, g.body.v.x, g.body.v.y, g.body.v.z, g.body.w.x, g.body.w.y, g.body.w.z, so.up_z, info.lowest, info.contacts, info.bottom_contacts, g.ground.h0, energy,
-                 g.body.com.z, kd, kup);
+                 g.body.com.z, kd, kup, kstep);
         }
         if (e == Event::Handback || e == Event::Reset) {
             if (e == Event::Handback) write_pose(c, car, true);  // the final pose with zero rates; the game's suspension settles it
@@ -320,7 +329,25 @@ void on_step(GtModCtx *c) {
     for (int i = 0; i < 3; ++i) { g.prev_pos[i] = s.position[i]; g.prev_vel[i] = s.velocity[i]; }
     for (int i = 0; i < 9; ++i) g.prev_rows[i] = s.basis[i];
     g.have_prev = true;
+    const bool post = g_sup->simulating() && g.wrote;   // a simulated pose went into this step
+    g.have_post = false;
+    g.post_written = false;
     g_api->call_original(c);
+    if (post) {
+        // The camera and the car's draw matrix are built from the state AFTER the world step (host FACTS "Rollover physics research", observation 1):
+        // writing the simulated pose only before the step showed the simulation plus one step of the game's own motion (0.27 m a step on the barrier route:
+        // the car shook). Keep what the step did (hit detection, kstep) and put the simulated pose back before anything reads it.
+        GtCarState after;
+        if (g_api->car_state(g_self, c, car, &after) == 0) {
+            for (int i = 0; i < 3; ++i) { g.post_pos[i] = after.position[i]; g.post_vel[i] = after.velocity[i]; }
+            for (int i = 0; i < 9; ++i) g.post_rows[i] = after.basis[i];
+            g.have_post = true;   // kstep in the log is measured either way
+            // 17 (check build): no post-step write, the shake comes back. Without the write the next step reads the game's result itself, so the
+            // hit detection must not add the capture again (post_written)
+            g.post_written = g_set.sabotage != 17;
+            if (g.post_written) write_pose(c, car, g_set.sabotage != 15);
+        }
+    }
 }
 
 }  // namespace
