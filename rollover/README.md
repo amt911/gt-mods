@@ -32,6 +32,13 @@ zeroes their rates, and keeps applying its wheel and suspension model whatever t
    the game's suspension settles it. A position jump above 3 m (reset-to-track) ends the simulation.
 5. **Before the first hit nothing is written**: the car is the stock game's (the in-game check shows it).
 
+   **No shake (0.5.1).** The camera and the car's draw matrix are built from the state the game leaves **after** its world step (host FACTS
+   "Rollover physics research"), and that step still moves the written pose: it integrates the velocity once more and its suspension pushes
+   (measured 2026-11-26 on the barrier route: 0.27 m a step, 1.02 x |v|/60 airborne and 1.73 x on the ground). In 0.5.0 the car was therefore drawn one
+   step of motion off the simulation and snapped back at the next step, so it shook. The world-step hook now also writes the simulated pose
+   **right after** `call_original`, keeping what the step did for the barrier-hit detection (`kstep` in the log), so what is drawn is the simulation's
+   pose (`kd` 0.0000 m on the same route). Check: the `poststep` judge of `tools/mod_rollover_check.sh --sim` (host repo); `--sabotage-nopost` must fail it.
+
 Limits: no barrier or wall geometry (the game keeps none that has been found: `docs/FACTS.md` "Collision code ... NOT FOUND"), so a wall only acts through the velocity change the
 game's own collision gives; the road is a plane under the four wheels, not a per-point height (`ground_height` is not offered: the game's road query is not frame-neutral from a
 tick, `docs/FINDINGS.md`); the hull proportions come from the Peugeot 206's model box and are a heuristic; player car only (AI cars are untouched).
