@@ -73,6 +73,8 @@ Nothing game-derived lives here: only hand-written mod code.
 - `mechanical-damage` - hard hits (the same impacts the deformation mod dents for, above a higher threshold) damage the player's car by where they land: front = engine and steering,
   rear = drive, sides = steering. Effects: up to -40 % engine power, a small constant pull to one side, a top-speed cap when badly damaged. Lasts for the race, rebuilt in the replay; shown in the
   cheat device (Car) with a repair action. `api = 5`. See `mechanical-damage/README.md`. In-game check: `tools/mod_damage_check.sh`.
+- `weather` - time of day (noon / afternoon / sunset / dusk, or progressive over the race) as a colour grade of the picture, and rain: overlay streaks plus a darker, desaturated grade; optional grip reduction (off by default). `api = 8`.
+  Rows in the cheat device's Race page. See `weather/README.md`. In-game check: `tools/mod_weather_check.sh`.
 - `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees), and tumble, bounce and slide like a body. 0.5.0 (`api = 7`, host API 7): `style = "realistic"` (default) is a rigid-body
   simulation (mass, inertia, gravity, impulse contacts of a box hull with the road: restitution, Coulomb friction) that takes the player's car when a hit changes its velocity by more than `takeover_dv` in one physics step, when it
   is on its side, or when it is airborne and spinning, writes its pose through the named `car_set_pose` with the clamp lifted by `tilt_free`, and hands the car back on its wheels (a car on its roof stays there until reset-to-track).
