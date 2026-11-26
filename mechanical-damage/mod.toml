@@ -1,0 +1,22 @@
+id = "mechanical-damage"
+name = "Mechanical damage"
+version = "0.1.0"
+library = "libmechanical_damage.so"
+api = 5
+enabled = false
+
+[settings]
+# velocity change of the player car in ONE physics step (m/s) below which a hit does nothing (the same hits the deformation mod dents for, but a higher bar: ordinary racing contact is 1-3)
+threshold = 6.0
+# damage (0..1) per m/s of velocity change above the threshold
+per_ms = 0.05
+# throttle lost at full engine + drive damage (0.4 = 40 %)
+engine_loss = 0.4
+# rad/s of steering pull at full alignment damage
+yaw_bias = 0.06
+# above this combined engine + drive damage the speed is capped: cap_high m/s just past it, cap_low m/s at full damage
+severe_start = 0.6
+cap_high = 45.0
+cap_low = 25.0
+# 0 turns every effect off, 1 = as designed
+effect_scale = 1.0
