@@ -68,12 +68,22 @@ Nothing game-derived lives here: only hand-written mod code.
   where it was, not to the nearest asphalt. `GT_MOD_RESET_FAKE=<step>` holds the button from that player-car step (a debugging aid); `GT_MOD_RESET_LOG=1` logs the car's state (used by `tools/mod_reset_check.sh`).
 - `cheats` - race-time cheats as rows of the F9 menu (keyboard or pad): slow motion (0.5x / 0.25x, player and AI cars), freeze AI, AI speed (0.5x-1.25x), nitro, moon gravity, jump and money (Enter/Right +1,000,000 Cr, Left -1,000,000; the save folder is copied to `savedata-backups/` before the first change; it stays once the game saves). Needs mod API v3 (the named SDK: host repo PR #536)
   (`api = 2`). Disabled by default and both cheats start off. See `cheats/README.md`; check: `tools/mod_cheats_check.sh` in the host repo.
+- `extra-cameras` - new race views selected from the cheat device (Camera): **Wheel** (fixed to the body at the front-left wheel), **Roof** (above the roof, looking forward and slightly down) and **TV**
+  (trackside points that follow the car), plus a smoothed **helicopter** camera for replays. `api = 9` (host API 9: `GT_HOOK_CAMERA`, `camera_get` / `camera_set`, `replay_active`). The game's own SELECT cycle includes them after its four views. Not done yet: the replay's camera button is not extended, the near plane is not adjusted, and orbit-camera still uses raw addresses. See `extra-cameras/README.md`. In-game check: `tools/mod_cameras_check.sh`.
+- `ghost-any-mode` - records the human car's laps (start-line crossing) and shows the best one as a translucent ghost on the next laps, in any mode; optional per-track persistence. The ghost is a box with the car's size drawn with the overlay
+  (`draw_car_pose` is not in the merged API 8). `api = 9` (camera function + `camera_projection`). See `ghost-any-mode/README.md`. In-game check: `tools/mod_ghost_check.sh`.
+- `mechanical-damage` - hard hits (the same impacts the deformation mod dents for, above a higher threshold) damage the player's car by where they land: front = engine and steering,
+  rear = drive, sides = steering. Effects: up to -40 % engine power, a small constant pull to one side, a top-speed cap when badly damaged. Lasts for the race, rebuilt in the replay; shown in the
+  cheat device (Car) with a repair action. `api = 5`. See `mechanical-damage/README.md`. In-game check: `tools/mod_damage_check.sh`.
+- `weather` - time of day (noon / afternoon / sunset / dusk, or progressive over the race) as a colour grade of the picture, and rain: overlay streaks plus a darker, desaturated grade; optional grip reduction (off by default). `api = 8`.
+  Rows in the cheat device's Race page. See `weather/README.md`. In-game check: `tools/mod_weather_check.sh`.
 - `rollover` - lets the player's car roll over, which the stock game cannot (it clamps the tilt to 35 degrees), and tumble, bounce and slide like a body. 0.5.0 (`api = 7`, host API 7): `style = "realistic"` (default) is a rigid-body
   simulation (mass, inertia, gravity, impulse contacts of a box hull with the road: restitution, Coulomb friction) that takes the player's car when a hit changes its velocity by more than `takeover_dv` in one physics step, when it
   is on its side, or when it is airborne and spinning, writes its pose through the named `car_set_pose` with the clamp lifted by `tilt_free`, and hands the car back on its wheels (a car on its roof stays there until reset-to-track).
   `style = "arcade"` is the 0.4.0 scripted roll (a roll rate held after a lateral velocity change above `threshold`; `gain`, `cap`) plus the body box (`body_box`, 0.2.0). The dormant flip state machine the clamp flag would also wake
   (the car sinks through the road and pops back up) is kept asleep by the host. Opt-in: `enabled = false` by default; toggles live from the F9 menu.
   See `rollover/README.md`. In-game check: `tools/mod_rollover_check.sh`.
+- `telemetry` - a panel over the race: speed, longitudinal / lateral G, throttle and brake bars and a 5-second graph, drawn with the mod draw API (needs mod API 8, host PR #667). Read-only; hidden = frames identical to no mod. Cheat device row *Telemetry panel* (Race) and hotkey `T`. Per-wheel slip waits for an SDK `car_wheels` call. See `telemetry/README.md`; check: `tools/telemetry_check.sh`.
 
 ## Build
 

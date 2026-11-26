@@ -1,0 +1,15 @@
+id = "telemetry"
+name = "Telemetry"
+version = "0.1.0"
+library = "libtelemetry.so"
+api = 8
+enabled = false
+
+[settings]
+# the panel is shown when a race starts; the cheat device's "Telemetry panel" row (Race) and the hotkey T (rebind it in Controls) toggle it
+visible = true
+# kmh or mph
+units = "kmh"
+# top-left corner of the panel in the 480 x 272 overlay space (it is 150 x 128 units)
+x = 8
+y = 52

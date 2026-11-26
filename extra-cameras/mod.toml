@@ -1,0 +1,27 @@
+id = "extra-cameras"
+name = "Extra cameras"
+version = "0.1.0"
+library = "libextra_cameras.so"
+api = 9
+enabled = false
+
+[settings]
+# which extra view the race starts in: "off" (the game's own), "wheel", "roof" or "tv"; the cheat device's Camera category changes it in game
+start_view = "off"
+# wheel camera: metres above the body origin, metres outward of the front-left wheel's centre line, degrees turned outward
+wheel_up = 0.15
+wheel_out = 0.0
+wheel_toe_deg = 0.0
+# roof camera: metres above the body origin and ahead of it, degrees looking down
+roof_up = 1.25
+roof_forward = 0.0
+roof_pitch_deg = 8.0
+# TV camera: a trackside point this many metres ahead of the car, to its side and above it; the camera moves on when the car is this far past it
+tv_ahead = 70.0
+tv_side = 14.0
+tv_height = 3.5
+tv_pass = 6.0
+# replay helicopter camera: metres behind and above the car, seconds for the smoothing to settle
+heli_back = 14.0
+heli_up = 9.0
+heli_smooth_s = 0.8
